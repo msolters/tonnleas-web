@@ -325,7 +325,20 @@ function specToChroma(spec, nFrames, nBins, fb) {
 function processStandard(mag, nFrames, nBins) {
   var chroma = specToChroma(mag, nFrames, nBins);
   var filtered = medianFilter(chroma, nFrames);
+  // rawEnergy: per-frame normalized copy for chromagram display.
+  // Without this, web mic gain differences make the chromagram too dark.
   var rawEnergy = new Float32Array(filtered);
+  for (var f = 0; f < nFrames; f++) {
+    var mx = 1e-10;
+    for (var c = 0; c < N_CHROMA; c++) {
+      var v = rawEnergy[c * nFrames + f];
+      if (v > mx) mx = v;
+    }
+    var inv = 1 / mx;
+    for (var c = 0; c < N_CHROMA; c++) {
+      rawEnergy[c * nFrames + f] *= inv;
+    }
+  }
   peakNormalize(filtered, nFrames);
   return { chroma: filtered, rawEnergy: rawEnergy };
 }
@@ -654,6 +667,8 @@ function estimateTempo(samples) {
 // ══════════════════════════════════════════════════════════
 // Worker Message Handler
 // ══════════════════════════════════════════════════════════
+var _lastHpssTime = 0; // track HPSS duration for adaptive throttling
+
 self.onmessage = function(e) {
   var type = e.data.type;
   var id = e.data.id;
@@ -669,9 +684,9 @@ self.onmessage = function(e) {
   if (type === 'process') {
     var samples = new Float32Array(e.data.samples);
     var cycle = e.data.cycle;
-    // Run HPSS foreground every cycle — matches mobile native DSP behavior.
-    // The worker runs on a separate thread so blocking is fine.
-    var doForeground = true;
+    // Adaptive HPSS: run every cycle if fast enough, throttle on slow devices.
+    // If the last HPSS cycle took > 800ms, skip to every 3rd cycle.
+    var doForeground = _lastHpssTime < 800 || cycle % 3 === 2;
 
     var stft = computeSTFT(samples);
     if (!stft) {
@@ -687,7 +702,9 @@ self.onmessage = function(e) {
 
     var tensorsFg = [];
     if (doForeground) {
+      var _hpssT0 = Date.now();
       var fgChroma = processForeground(mag, nFrames, nBins);
+      _lastHpssTime = Date.now() - _hpssT0;
       tensorsFg = prepareModelInputs(fgChroma, nFrames);
     }
 
