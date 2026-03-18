@@ -669,7 +669,9 @@ self.onmessage = function(e) {
   if (type === 'process') {
     var samples = new Float32Array(e.data.samples);
     var cycle = e.data.cycle;
-    var doForeground = cycle % 3 === 2;
+    // Run HPSS foreground every cycle — matches mobile native DSP behavior.
+    // The worker runs on a separate thread so blocking is fine.
+    var doForeground = true;
 
     var stft = computeSTFT(samples);
     if (!stft) {
