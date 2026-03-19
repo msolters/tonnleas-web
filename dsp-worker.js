@@ -836,15 +836,42 @@ self.onmessage = async function(e) {
       ensemble = await runEnsemble(tensorsStd, tensorsFg, tensorsMel);
     }
 
-    // Transfer chroma, rawEnergy, and ensemble avg
-    var transferList = [stdResult.chroma.buffer, stdResult.rawEnergy.buffer];
+    // Only transfer ensemble avg (107KB, needed for Markov).
+    // Chroma/rawEnergy use structured clone — avoids creating new ArrayBuffers
+    // on the receiver every cycle, reducing GC pressure on memory-constrained iOS.
+    var transferList = [];
     if (ensemble.avg.buffer.byteLength > 0) transferList.push(ensemble.avg.buffer);
+
+    // Send compact chroma for key estimation (last 22 frames)
+    // and a single reduced column for chromagram display (12 values).
+    // This replaces sending the full 12×nFrames arrays (~16KB each).
+    var summaryFrames = Math.min(22, nFrames);
+    var chromaSummary = new Float32Array(N_CHROMA * summaryFrames);
+    for (var c = 0; c < N_CHROMA; c++) {
+      var srcOff = c * nFrames + (nFrames - summaryFrames);
+      chromaSummary.set(stdResult.chroma.subarray(srcOff, srcOff + summaryFrames), c * summaryFrames);
+    }
+
+    // Reduce rawEnergy to a single column (max per bin over last ~22 frames)
+    var rawEnergyCol = new Float32Array(N_CHROMA);
+    for (var c = 0; c < N_CHROMA; c++) {
+      var mx = 0;
+      for (var f = nFrames - summaryFrames; f < nFrames; f++) {
+        var v = stdResult.rawEnergy[c * nFrames + f];
+        if (v > mx) mx = v;
+      }
+      rawEnergyCol[c] = mx;
+    }
+
+    transferList.push(chromaSummary.buffer, rawEnergyCol.buffer);
 
     self.postMessage({
       type: 'result',
       id: id,
-      chroma: stdResult.chroma,
-      rawEnergy: stdResult.rawEnergy,
+      chroma: chromaSummary,
+      chromaFrames: summaryFrames,
+      rawEnergy: rawEnergyCol,
+      rawEnergyFrames: 1,
       nFrames: nFrames,
       ensembleAvg: ensemble.avg,
       nClasses: ensemble.nClasses,
