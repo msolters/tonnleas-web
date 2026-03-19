@@ -1,14 +1,16 @@
 /**
- * DSP Web Worker — Tonnléas
+ * DSP + Inference Web Worker — Tonnléas
  *
- * Self-contained DSP pipeline running off the main thread.
- * ALL math functions are inlined (no imports — workers loaded from public/ can't use Metro).
+ * Self-contained DSP pipeline AND ONNX inference running off the main thread.
+ * The main thread is completely free for animations, audio capture, and UI.
  *
  * Protocol:
- *   Receives: { type: 'init', chromaFB: ArrayBuffer }
+ *   Receives: { type: 'init', chromaFB: ArrayBuffer, baseUrl: string, modelUrl: string }
  *             { type: 'process', id: number, samples: ArrayBuffer, cycle: number }
  *   Sends:    { type: 'ready' }
- *             { type: 'result', id, chroma, rawEnergy, nFrames, tensorsStd, tensorsFg, tensorsMel, tempo }
+ *             { type: 'model-loaded' }
+ *             { type: 'model-error', error: string }
+ *             { type: 'result', id, chroma, rawEnergy, nFrames, ensembleAvg, nClasses, tempo }
  */
 
 // ══════════════════════════════════════════════════════════
@@ -27,6 +29,13 @@ var HPSS_KERNEL = 31;
 var MELODY_FREQ_LO = 250;
 var MELODY_FREQ_HI = 3500;
 var DRONE_WINDOW = 172;
+
+// Ensemble weights
+var WEIGHT_STD = 0.40;
+var WEIGHT_FG = 0.25;
+var WEIGHT_MEL = 0.35;
+var WEIGHT_STD_2WAY = 0.50;
+var WEIGHT_MEL_2WAY = 0.50;
 
 // ══════════════════════════════════════════════════════════
 // FFT — Radix-2 Cooley-Tukey with pre-computed twiddle factors
@@ -665,11 +674,118 @@ function estimateTempo(samples) {
 }
 
 // ══════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════
+// ONNX Inference (runs inside the worker — main thread is free)
+// ══════════════════════════════════════════════════════════
+var _onnxSession = null;
+var _onnxReady = false;
+var _softmaxPool = null;
+
+async function inferWindows(windowTensors) {
+  if (!_onnxSession) return [];
+  var allProbs = [];
+  for (var w = 0; w < windowTensors.length; w++) {
+    var input = new self.ort.Tensor('float32', windowTensors[w], [1, 2, N_CHROMA, WINDOW_FRAMES]);
+    var output = await _onnxSession.run({ input: input });
+    var logits = output.output.data;
+    var nC = logits.length;
+    if (!_softmaxPool || _softmaxPool.length !== nC) _softmaxPool = new Float32Array(nC);
+    var maxL = -Infinity;
+    for (var i = 0; i < nC; i++) if (logits[i] > maxL) maxL = logits[i];
+    var sum = 0;
+    for (var i = 0; i < nC; i++) {
+      _softmaxPool[i] = Math.exp(logits[i] - maxL);
+      sum += _softmaxPool[i];
+    }
+    var invSum = 1 / sum;
+    var probs = new Float32Array(nC);
+    for (var i = 0; i < nC; i++) probs[i] = _softmaxPool[i] * invSum;
+    allProbs.push(probs);
+  }
+  return allProbs;
+}
+
+function averageProbs(allProbs) {
+  var n = allProbs.length;
+  var nC = allProbs[0].length;
+  var avg = new Float32Array(nC);
+  for (var p = 0; p < n; p++)
+    for (var i = 0; i < nC; i++) avg[i] += allProbs[p][i];
+  for (var i = 0; i < nC; i++) avg[i] /= n;
+  return avg;
+}
+
+function findMax(arr) {
+  var mx = 0;
+  for (var i = 0; i < arr.length; i++) if (arr[i] > mx) mx = arr[i];
+  return mx || 1;
+}
+
+async function runEnsemble(tensorsStd, tensorsFg, tensorsMel) {
+  if (!_onnxReady) return { avg: new Float32Array(0), nClasses: 0 };
+  var hasStd = tensorsStd.length > 0;
+  var hasFg = tensorsFg.length > 0;
+  var hasMel = tensorsMel.length > 0;
+
+  var probsStd = hasStd ? await inferWindows(tensorsStd) : [];
+  var probsFg = hasFg ? await inferWindows(tensorsFg) : [];
+  var probsMel = hasMel ? await inferWindows(tensorsMel) : [];
+
+  var avgStd = hasStd && probsStd.length > 0 ? averageProbs(probsStd) : null;
+  var avgFg = hasFg && probsFg.length > 0 ? averageProbs(probsFg) : null;
+  var avgMel = hasMel && probsMel.length > 0 ? averageProbs(probsMel) : null;
+
+  var ref = avgStd || avgFg || avgMel;
+  if (!ref) return { avg: new Float32Array(0), nClasses: 0 };
+  var nClasses = ref.length;
+
+  var maxStd = avgStd ? findMax(avgStd) : 1;
+  var maxFg = avgFg ? findMax(avgFg) : 1;
+  var maxMel = avgMel ? findMax(avgMel) : 1;
+
+  var wStd, wFg, wMel;
+  if (hasStd && hasFg && hasMel) { wStd = WEIGHT_STD; wFg = WEIGHT_FG; wMel = WEIGHT_MEL; }
+  else if (hasStd && hasMel) { wStd = WEIGHT_STD_2WAY; wFg = 0; wMel = WEIGHT_MEL_2WAY; }
+  else if (hasStd && hasFg) { wStd = 0.60; wFg = 0.40; wMel = 0; }
+  else if (hasStd) { wStd = 1; wFg = 0; wMel = 0; }
+  else if (hasFg) { wStd = 0; wFg = 1; wMel = 0; }
+  else { wStd = 0; wFg = 0; wMel = 1; }
+
+  var avg = new Float32Array(nClasses);
+  for (var i = 0; i < nClasses; i++) {
+    var v = 0;
+    if (avgStd) v += wStd * (avgStd[i] / maxStd);
+    if (avgFg) v += wFg * (avgFg[i] / maxFg);
+    if (avgMel) v += wMel * (avgMel[i] / maxMel);
+    avg[i] = v;
+  }
+  return { avg: avg, nClasses: nClasses };
+}
+
+async function loadOnnxModel(baseUrl, modelUrl) {
+  try {
+    // Load ort runtime
+    importScripts(baseUrl + '/ort.min.js');
+    self.ort.env.wasm.numThreads = 1;
+    self.ort.env.wasm.wasmPaths = baseUrl + '/';
+
+    // Create session
+    _onnxSession = await self.ort.InferenceSession.create(modelUrl, {
+      executionProviders: ['wasm'],
+    });
+    _onnxReady = true;
+    self.postMessage({ type: 'model-loaded' });
+  } catch (err) {
+    self.postMessage({ type: 'model-error', error: err.message || String(err) });
+  }
+}
+
+// ══════════════════════════════════════════════════════════
 // Worker Message Handler
 // ══════════════════════════════════════════════════════════
-var _lastHpssTime = 0; // track HPSS duration for adaptive throttling
+var _lastHpssTime = 0;
 
-self.onmessage = function(e) {
+self.onmessage = async function(e) {
   var type = e.data.type;
   var id = e.data.id;
 
@@ -678,14 +794,16 @@ self.onmessage = function(e) {
     initFilterBanks(fb);
     initHannWindow();
     self.postMessage({ type: 'ready' });
+    // Load ONNX model if URLs provided
+    if (e.data.baseUrl !== undefined && e.data.modelUrl) {
+      loadOnnxModel(e.data.baseUrl, e.data.modelUrl);
+    }
     return;
   }
 
   if (type === 'process') {
     var samples = new Float32Array(e.data.samples);
     var cycle = e.data.cycle;
-    // Adaptive HPSS: run every cycle if fast enough, throttle on slow devices.
-    // If the last HPSS cycle took > 800ms, skip to every 3rd cycle.
     var doForeground = _lastHpssTime < 800 || cycle % 3 === 2;
 
     var stft = computeSTFT(samples);
@@ -712,12 +830,15 @@ self.onmessage = function(e) {
     var tensorsMel = prepareModelInputs(melChroma, nFrames);
     var tempo = !doForeground ? estimateTempo(samples) : null;
 
-    // Build transfer list for zero-copy transfer
-    var transferList = [];
-    var stdBuffers = tensorsStd.map(function(t) { transferList.push(t.buffer); return t.buffer; });
-    var fgBuffers = tensorsFg.map(function(t) { transferList.push(t.buffer); return t.buffer; });
-    var melBuffers = tensorsMel.map(function(t) { transferList.push(t.buffer); return t.buffer; });
-    transferList.push(stdResult.chroma.buffer, stdResult.rawEnergy.buffer);
+    // Run inference in the worker (no main thread blocking)
+    var ensemble = { avg: new Float32Array(0), nClasses: 0 };
+    if (_onnxReady) {
+      ensemble = await runEnsemble(tensorsStd, tensorsFg, tensorsMel);
+    }
+
+    // Transfer chroma, rawEnergy, and ensemble avg
+    var transferList = [stdResult.chroma.buffer, stdResult.rawEnergy.buffer];
+    if (ensemble.avg.buffer.byteLength > 0) transferList.push(ensemble.avg.buffer);
 
     self.postMessage({
       type: 'result',
@@ -725,9 +846,8 @@ self.onmessage = function(e) {
       chroma: stdResult.chroma,
       rawEnergy: stdResult.rawEnergy,
       nFrames: nFrames,
-      tensorsStd: stdBuffers,
-      tensorsFg: fgBuffers,
-      tensorsMel: melBuffers,
+      ensembleAvg: ensemble.avg,
+      nClasses: ensemble.nClasses,
       tempo: tempo,
     }, transferList);
     return;
