@@ -768,10 +768,16 @@ async function loadOnnxModel(baseUrl, modelUrl) {
     importScripts(baseUrl + '/ort.min.js');
     self.ort.env.wasm.numThreads = 1;
     self.ort.env.wasm.wasmPaths = baseUrl + '/';
+    // Limit WASM proxy to reduce memory: disable features we don't need
+    self.ort.env.wasm.proxy = false;
 
     // Create session
     _onnxSession = await self.ort.InferenceSession.create(modelUrl, {
       executionProviders: ['wasm'],
+      enableMemPattern: true,     // reuse memory allocation patterns
+      enableCpuMemArena: true,    // arena allocator reduces fragmentation
+      interOpNumThreads: 1,
+      intraOpNumThreads: 1,
     });
     _onnxReady = true;
     self.postMessage({ type: 'model-loaded' });
