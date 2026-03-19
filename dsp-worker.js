@@ -900,28 +900,24 @@ self.onmessage = async function(e) {
       chromaSummary.set(stdResult.chroma.subarray(srcOff, srcOff + summaryFrames), c * summaryFrames);
     }
 
-    // Reduced rawEnergy column for chromagram display
-    var rawEnergyCol = new Float32Array(N_CHROMA);
+    // Compact rawEnergy matching chroma summary (12 × summaryFrames)
+    var rawEnergySummary = new Float32Array(N_CHROMA * summaryFrames);
     for (var c = 0; c < N_CHROMA; c++) {
-      var mx = 0;
-      for (var f = nFrames - summaryFrames; f < nFrames; f++) {
-        var v = stdResult.rawEnergy[c * nFrames + f];
-        if (v > mx) mx = v;
-      }
-      rawEnergyCol[c] = mx;
+      var srcOff = c * nFrames + (nFrames - summaryFrames);
+      rawEnergySummary.set(stdResult.rawEnergy.subarray(srcOff, srcOff + summaryFrames), c * summaryFrames);
     }
 
     // Transfer only chroma + rawEnergy as Transferable (tiny).
     // Ensemble avg (107KB) sent via structured clone — avoids creating
     // a new ArrayBuffer on the receiver (cheaper for GC on iOS).
-    var transferList = [chromaSummary.buffer, rawEnergyCol.buffer];
+    var transferList = [chromaSummary.buffer, rawEnergySummary.buffer];
 
     self.postMessage({
       type: 'result',
       id: id,
       chroma: chromaSummary,
       chromaFrames: summaryFrames,
-      rawEnergy: rawEnergyCol,
+      rawEnergy: rawEnergySummary,
       nFrames: nFrames,
       nClasses: ensemble.nClasses,
       ensembleAvg: ensemble.avg,
