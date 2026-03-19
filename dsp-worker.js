@@ -787,6 +787,50 @@ async function loadOnnxModel(baseUrl, modelUrl) {
 }
 
 // ══════════════════════════════════════════════════════════
+// Class→Tune aggregation (moved here to avoid 107KB/cycle transfer)
+// ══════════════════════════════════════════════════════════
+var _classToDense = null;  // Int32Array: classIdx → dense tune index
+var _numDenseTunes = 0;
+var _OBS_TOP_K = 100;
+
+// Aggregate class probs → per-tune dense probs, return top-K
+function aggregateInWorker(classProbs) {
+  if (!_classToDense || _numDenseTunes === 0) return null;
+  var n = _numDenseTunes;
+  // Accumulate per-tune
+  var tuneProbs = new Float32Array(n);
+  for (var c = 0; c < classProbs.length; c++) {
+    var di = _classToDense[c];
+    if (di >= 0) tuneProbs[di] += classProbs[c];
+  }
+  // Find top-K
+  var topK = Math.min(_OBS_TOP_K, n);
+  var topIdx = new Int32Array(topK);
+  var topVal = new Float32Array(topK);
+  topIdx.fill(-1);
+  var count = 0, minVal = 0, minPos = 0;
+  for (var i = 0; i < n; i++) {
+    var v = tuneProbs[i];
+    if (v <= 0) continue;
+    if (count < topK) {
+      topIdx[count] = i;
+      topVal[count] = v;
+      count++;
+      if (count === topK) {
+        minVal = topVal[0]; minPos = 0;
+        for (var j = 1; j < topK; j++) { if (topVal[j] < minVal) { minVal = topVal[j]; minPos = j; } }
+      }
+    } else if (v > minVal) {
+      topIdx[minPos] = i;
+      topVal[minPos] = v;
+      minVal = topVal[0]; minPos = 0;
+      for (var j = 1; j < topK; j++) { if (topVal[j] < minVal) { minVal = topVal[j]; minPos = j; } }
+    }
+  }
+  return { topIdx: topIdx, topVal: topVal, topCount: count, tuneProbs: tuneProbs };
+}
+
+// ══════════════════════════════════════════════════════════
 // Worker Message Handler
 // ══════════════════════════════════════════════════════════
 var _lastHpssTime = 0;
@@ -797,6 +841,12 @@ self.onmessage = async function(e) {
 
   if (type === 'init') {
     var fb = new Float32Array(e.data.chromaFB);
+    // Accept class→tune mapping for in-worker aggregation
+    if (e.data.classToDense) {
+      _classToDense = new Int32Array(e.data.classToDense);
+      _numDenseTunes = e.data.numDenseTunes || 0;
+      _OBS_TOP_K = e.data.obsTopK || 100;
+    }
     initFilterBanks(fb);
     initHannWindow();
     self.postMessage({ type: 'ready' });
@@ -836,21 +886,13 @@ self.onmessage = async function(e) {
     var tensorsMel = prepareModelInputs(melChroma, nFrames);
     var tempo = !doForeground ? estimateTempo(samples) : null;
 
-    // Run inference in the worker (no main thread blocking)
+    // Run inference in the worker
     var ensemble = { avg: new Float32Array(0), nClasses: 0 };
     if (_onnxReady) {
       ensemble = await runEnsemble(tensorsStd, tensorsFg, tensorsMel);
     }
 
-    // Only transfer ensemble avg (107KB, needed for Markov).
-    // Chroma/rawEnergy use structured clone — avoids creating new ArrayBuffers
-    // on the receiver every cycle, reducing GC pressure on memory-constrained iOS.
-    var transferList = [];
-    if (ensemble.avg.buffer.byteLength > 0) transferList.push(ensemble.avg.buffer);
-
-    // Send compact chroma for key estimation (last 22 frames)
-    // and a single reduced column for chromagram display (12 values).
-    // This replaces sending the full 12×nFrames arrays (~16KB each).
+    // Compact chroma summary for key estimation (last 22 frames)
     var summaryFrames = Math.min(22, nFrames);
     var chromaSummary = new Float32Array(N_CHROMA * summaryFrames);
     for (var c = 0; c < N_CHROMA; c++) {
@@ -858,7 +900,7 @@ self.onmessage = async function(e) {
       chromaSummary.set(stdResult.chroma.subarray(srcOff, srcOff + summaryFrames), c * summaryFrames);
     }
 
-    // Reduce rawEnergy to a single column (max per bin over last ~22 frames)
+    // Reduced rawEnergy column for chromagram display
     var rawEnergyCol = new Float32Array(N_CHROMA);
     for (var c = 0; c < N_CHROMA; c++) {
       var mx = 0;
@@ -869,7 +911,10 @@ self.onmessage = async function(e) {
       rawEnergyCol[c] = mx;
     }
 
-    transferList.push(chromaSummary.buffer, rawEnergyCol.buffer);
+    // Transfer only chroma + rawEnergy as Transferable (tiny).
+    // Ensemble avg (107KB) sent via structured clone — avoids creating
+    // a new ArrayBuffer on the receiver (cheaper for GC on iOS).
+    var transferList = [chromaSummary.buffer, rawEnergyCol.buffer];
 
     self.postMessage({
       type: 'result',
@@ -877,10 +922,9 @@ self.onmessage = async function(e) {
       chroma: chromaSummary,
       chromaFrames: summaryFrames,
       rawEnergy: rawEnergyCol,
-      rawEnergyFrames: 1,
       nFrames: nFrames,
-      ensembleAvg: ensemble.avg,
       nClasses: ensemble.nClasses,
+      ensembleAvg: ensemble.avg,
       tempo: tempo,
     }, transferList);
     return;
