@@ -781,8 +781,6 @@ async function loadOnnxModel(baseUrl, modelUrl) {
       enableCpuMemArena: true,    // arena allocator reduces fragmentation
       interOpNumThreads: 1,
       intraOpNumThreads: 1,
-      // Fix tensor dimensions so ONNX doesn't over-allocate for dynamic shapes
-      freeDimensionOverrides: { batch_size: 1 },
     });
     _onnxReady = true;
     // Log memory after model load for debugging iOS crashes
