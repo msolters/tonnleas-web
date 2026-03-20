@@ -770,16 +770,28 @@ async function loadOnnxModel(baseUrl, modelUrl) {
     self.ort.env.wasm.wasmPaths = baseUrl + '/';
     // Limit WASM proxy to reduce memory: disable features we don't need
     self.ort.env.wasm.proxy = false;
+    // Disable trace/profiling to reduce memory
+    self.ort.env.trace = false;
+    self.ort.env.logLevel = 'error';
 
-    // Create session
+    // Create session with memory-conscious options
     _onnxSession = await self.ort.InferenceSession.create(modelUrl, {
       executionProviders: ['wasm'],
       enableMemPattern: true,     // reuse memory allocation patterns
       enableCpuMemArena: true,    // arena allocator reduces fragmentation
       interOpNumThreads: 1,
       intraOpNumThreads: 1,
+      // Fix tensor dimensions so ONNX doesn't over-allocate for dynamic shapes
+      freeDimensionOverrides: { batch_size: 1 },
     });
     _onnxReady = true;
+    // Log memory after model load for debugging iOS crashes
+    if (typeof performance !== 'undefined' && performance.memory) {
+      var mem = performance.memory;
+      console.log('[DSP Worker] Model loaded. JS heap: ' +
+        Math.round(mem.usedJSHeapSize / 1048576) + 'MB / ' +
+        Math.round(mem.jsHeapSizeLimit / 1048576) + 'MB');
+    }
     self.postMessage({ type: 'model-loaded' });
   } catch (err) {
     self.postMessage({ type: 'model-error', error: err.message || String(err) });
