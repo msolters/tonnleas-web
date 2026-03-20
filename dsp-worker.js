@@ -768,11 +768,8 @@ async function loadOnnxModel(baseUrl, modelUrl) {
     importScripts(baseUrl + '/ort.min.js');
     self.ort.env.wasm.numThreads = 1;
     self.ort.env.wasm.wasmPaths = baseUrl + '/';
-    // Limit WASM proxy to reduce memory: disable features we don't need
+    // Limit WASM proxy to reduce memory
     self.ort.env.wasm.proxy = false;
-    // Disable trace/profiling to reduce memory
-    self.ort.env.trace = false;
-    self.ort.env.logLevel = 'error';
 
     // Create session
     _onnxSession = await self.ort.InferenceSession.create(modelUrl, {
