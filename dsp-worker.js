@@ -774,6 +774,13 @@ async function loadOnnxModel(baseUrl, modelUrl) {
     self.ort.env.trace = false;
     self.ort.env.logLevel = 'error';
 
+    // Pre-fetch the smaller non-jsep WASM binary (12MB vs 24MB jsep default).
+    // Passing wasmBinary bypasses the jsep loader entirely, saving ~12MB.
+    var wasmUrl = baseUrl + '/ort-wasm-simd-threaded.wasm';
+    var wasmResp = await fetch(wasmUrl);
+    if (!wasmResp.ok) throw new Error('Failed to fetch WASM: ' + wasmResp.status);
+    self.ort.env.wasm.wasmBinary = await wasmResp.arrayBuffer();
+
     // Create session with memory-conscious options
     _onnxSession = await self.ort.InferenceSession.create(modelUrl, {
       executionProviders: ['wasm'],
