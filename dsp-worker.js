@@ -860,8 +860,16 @@ self.onmessage = async function(e) {
     initFilterBanks(fb);
     initHannWindow();
     self.postMessage({ type: 'ready' });
-    // Load ONNX model if URLs provided
+    // Load ONNX model if URLs provided (eager mode — native builds)
     if (e.data.baseUrl !== undefined && e.data.modelUrl) {
+      loadOnnxModel(e.data.baseUrl, e.data.modelUrl);
+    }
+    return;
+  }
+
+  if (type === 'load-model') {
+    // Deferred model load (web — triggered on first audio)
+    if (!_onnxReady && e.data.baseUrl !== undefined && e.data.modelUrl) {
       loadOnnxModel(e.data.baseUrl, e.data.modelUrl);
     }
     return;
