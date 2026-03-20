@@ -685,7 +685,7 @@ async function inferWindows(windowTensors) {
   if (!_onnxSession) return [];
   var allProbs = [];
   for (var w = 0; w < windowTensors.length; w++) {
-    var input = new self.ort.Tensor('float32', windowTensors[w], [1, 2, N_CHROMA, WINDOW_FRAMES]);
+    var input = new self.ort.Tensor('float32', windowTensors[w], [1, 2 * N_CHROMA, WINDOW_FRAMES]);
     var output = await _onnxSession.run({ input: input });
     var logits = output.output.data;
     var nC = logits.length;
