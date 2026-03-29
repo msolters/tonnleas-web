@@ -1229,9 +1229,12 @@ self.onmessage = async function(e) {
   // indexed by frame count — only new frames get processed.
   if (!self._hcqtLoading && !self._hcqtModule) {
     self._hcqtLoading = true;
-    self._hcqtChromaCache = null;   // Float32Array [12 × cachedFrames]
-    self._hcqtPitchCache = null;    // Float32Array [31 × cachedFrames]
+    self._hcqtChromaCache = null;
     self._hcqtCachedFrames = 0;
+    self._hcqtNovelty = 0;
+    // Persistent key profile state (survives across calls)
+    self._keyProfileEmaPtr = null;
+    self._keyProfileWarmPtr = null;
     importScripts((self._baseUrl || '') + '/hcqt_melody.js');
     if (typeof createHCQTModule === 'function') {
       createHCQTModule({
@@ -1268,17 +1271,30 @@ self.onmessage = async function(e) {
       var maxFrames = Math.floor(nSamples / HOP_LENGTH);
 
       // Allocate: 3 chroma outputs (12×T each) + guide (36×T) + masked (36×T)
-      var stdPtr    = mod._malloc(12 * maxFrames * 4);
-      var fgPtr     = mod._malloc(12 * maxFrames * 4);
-      var melPtr    = mod._malloc(12 * maxFrames * 4);
-      var guidePtr  = mod._malloc(36 * maxFrames * 4);
-      var maskedPtr = mod._malloc(36 * maxFrames * 4);
+      // Allocate persistent key profile state (once, reused across calls)
+      if (!self._keyProfileEmaPtr) {
+        self._keyProfileEmaPtr = mod._malloc(12 * 4);  // 12 floats
+        self._keyProfileWarmPtr = mod._malloc(4);       // 1 int
+        // Zero-initialize
+        for (var ki = 0; ki < 12; ki++) mod.HEAPF32[(self._keyProfileEmaPtr >> 2) + ki] = 0;
+        mod.HEAP32[self._keyProfileWarmPtr >> 2] = 0;
+      }
+
+      var stdPtr     = mod._malloc(12 * maxFrames * 4);
+      var fgPtr      = mod._malloc(12 * maxFrames * 4);
+      var melPtr     = mod._malloc(12 * maxFrames * 4);
+      var guidePtr   = mod._malloc(36 * maxFrames * 4);
+      var maskedPtr  = mod._malloc(36 * maxFrames * 4);
+      var noveltyPtr = mod._malloc(4);  // 1 float
       var samplesPtr = mod._malloc(nSamples * 4);
 
       mod.HEAPF32.set(samples, samplesPtr >> 2);
 
-      // Single WASM call produces all 3 ensemble chromas + debug outputs
-      var actualFrames = mod._hcqt_melody(samplesPtr, nSamples, stdPtr, fgPtr, melPtr, guidePtr, maskedPtr);
+      // Single WASM call: 3 ensemble chromas + debug outputs + novelty
+      var actualFrames = mod._hcqt_melody(
+        samplesPtr, nSamples, stdPtr, fgPtr, melPtr, guidePtr, maskedPtr,
+        self._keyProfileEmaPtr, self._keyProfileWarmPtr, noveltyPtr
+      );
       nFrames = actualFrames;
       hcqtFrames = actualFrames;
 
@@ -1289,6 +1305,7 @@ self.onmessage = async function(e) {
       self._hcqtGuideCache  = new Float32Array(mod.HEAPF32.buffer, guidePtr,  36 * nFrames).slice();
       self._hcqtMaskedCache = new Float32Array(mod.HEAPF32.buffer, maskedPtr, 36 * nFrames).slice();
       self._hcqtChromaCache = chromaStd;
+      self._hcqtNovelty = mod.HEAPF32[noveltyPtr >> 2];
 
       mod._free(samplesPtr);
       mod._free(stdPtr);
@@ -1296,8 +1313,11 @@ self.onmessage = async function(e) {
       mod._free(melPtr);
       mod._free(guidePtr);
       mod._free(maskedPtr);
+      mod._free(noveltyPtr);
+      // NOTE: keyProfileEmaPtr and keyProfileWarmPtr are persistent — NOT freed
 
-      console.log('[Worker] HCQT 3-way: ' + nFrames + ' frames in ' + (Date.now() - hcqtT0) + 'ms');
+      var noveltyStr = self._hcqtNovelty > 0.01 ? ' novelty=' + self._hcqtNovelty.toFixed(3) : '';
+      console.log('[Worker] HCQT 3-way: ' + nFrames + ' frames in ' + (Date.now() - hcqtT0) + 'ms' + noveltyStr);
 
       // 3-way ensemble from CQT: standard (masked f1) + foreground (consensus) + melody (top-1)
       var tensorsStd = prepareModelInputs(chromaStd, nFrames);
@@ -1349,6 +1369,7 @@ self.onmessage = async function(e) {
       nClasses: ensemble.nClasses,
       ensembleAvg: ensemble.avg,
       tempo: tempo,
+      keyNovelty: self._hcqtNovelty || 0,
     }, transferList);
     return;
   }
