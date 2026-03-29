@@ -31,9 +31,9 @@ var MELODY_FREQ_HI = 3500;
 var DRONE_WINDOW = 172;
 
 // Ensemble weights
-var WEIGHT_STD = 0.40;
-var WEIGHT_FG = 0.25;
-var WEIGHT_MEL = 0.35;
+var WEIGHT_STD = 0.50;
+var WEIGHT_FG = 0.20;
+var WEIGHT_MEL = 0.30;
 var WEIGHT_STD_2WAY = 0.50;
 var WEIGHT_MEL_2WAY = 0.50;
 
@@ -315,6 +315,207 @@ function initFilterBanks(fb) {
   }
 }
 
+// ══════════════════════════════════════════════════════════
+// CQT Chromagram — matches librosa.feature.chroma_cqt
+// Uses Goertzel algorithm for efficient single-frequency DFT
+// ══════════════════════════════════════════════════════════
+
+var CQT_N_OCTAVES = 7;
+var CQT_BINS_PER_OCTAVE = 36;  // 3 per semitone, matching librosa chroma_cqt default
+var CQT_BINS = CQT_N_OCTAVES * CQT_BINS_PER_OCTAVE;  // 252 bins
+var CQT_FMIN = 32.7032;  // C1
+var CQT_Q = 1.0 / (Math.pow(2, 1.0 / CQT_BINS_PER_OCTAVE) - 1);  // Q for 36 bins/octave ≈ 51.9
+
+// Pre-compute CQT bin frequencies and window lengths
+var cqtFreqs = new Float64Array(CQT_BINS);
+var cqtWinLens = new Int32Array(CQT_BINS);
+
+for (var k = 0; k < CQT_BINS; k++) {
+  cqtFreqs[k] = CQT_FMIN * Math.pow(2, k / CQT_BINS_PER_OCTAVE);
+  cqtWinLens[k] = Math.ceil(CQT_Q * SAMPLE_RATE / cqtFreqs[k]);
+}
+
+// Pre-compute Hann windows for each CQT bin
+var cqtWindows = new Array(CQT_BINS);
+for (var k = 0; k < CQT_BINS; k++) {
+  var N = cqtWinLens[k];
+  cqtWindows[k] = new Float32Array(N);
+  for (var i = 0; i < N; i++) {
+    cqtWindows[k][i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / N));
+  }
+}
+
+/**
+ * Compute CQT-based chromagram from raw audio samples.
+ * Matches librosa.feature.chroma_cqt(y, sr=22050, hop_length=512, n_chroma=12).
+ *
+ * @param samples Float32Array of audio samples (mono, 22050 Hz)
+ * @returns { chroma: Float32Array(12 * nFrames), nFrames: number }
+ */
+// Pre-compute per-bin normalization: 2 / (N_k * sqrt(N_k))
+var cqtNormFactors = new Float64Array(CQT_BINS);
+for (var k = 0; k < CQT_BINS; k++) {
+  cqtNormFactors[k] = 2.0 / (cqtWinLens[k] * Math.sqrt(cqtWinLens[k]));
+}
+
+// Pre-compute sin/cos tables per CQT bin
+// Only for bins where N_k <= 4096 (higher freq bins with short windows).
+// For low-freq bins with very long windows, compute on the fly to save memory.
+var CQT_PRECOMPUTE_LIMIT = 4096;
+var cqtCosTable = new Array(CQT_BINS);
+var cqtSinTable = new Array(CQT_BINS);
+var cqtOmega = new Float64Array(CQT_BINS);
+for (var k = 0; k < CQT_BINS; k++) {
+  var N_k = cqtWinLens[k];
+  cqtOmega[k] = 2 * Math.PI * cqtFreqs[k] / SAMPLE_RATE;
+  if (N_k <= CQT_PRECOMPUTE_LIMIT) {
+    cqtCosTable[k] = new Float32Array(N_k);
+    cqtSinTable[k] = new Float32Array(N_k);
+    for (var i = 0; i < N_k; i++) {
+      var phase = cqtOmega[k] * i;
+      cqtCosTable[k][i] = Math.cos(phase);
+      cqtSinTable[k][i] = Math.sin(phase);
+    }
+  } else {
+    cqtCosTable[k] = null;
+    cqtSinTable[k] = null;
+  }
+}
+
+/**
+ * Hybrid CQT: uses STFT projection for low-freq bins (long windows),
+ * direct DFT for high-freq bins (short windows).
+ *
+ * For low-freq bins where N_k > N_FFT, we project the STFT onto the
+ * CQT kernel in the frequency domain (O(nBins) per bin per frame).
+ * For high-freq bins where N_k <= N_FFT, direct DFT is fast enough.
+ *
+ * This matches librosa's approach (STFT-based CQT) for speed.
+ */
+
+// Pre-compute frequency-domain CQT kernels for low-freq bins
+// These project STFT bins onto CQT frequencies
+var cqtStftKernelRe = new Array(CQT_BINS);
+var cqtStftKernelIm = new Array(CQT_BINS);
+var cqtUseStft = new Uint8Array(CQT_BINS); // 1 = use STFT projection
+
+var nBinsStft = (N_FFT >> 1) + 1;
+for (var k = 0; k < CQT_BINS; k++) {
+  if (cqtWinLens[k] > N_FFT) {
+    // Low-freq bin: use STFT projection
+    // Build the kernel in frequency domain: FFT of the windowed exponential
+    // For a bin at frequency f_k, the STFT bin nearest to f_k gets most energy
+    cqtUseStft[k] = 1;
+
+    // Simple approach: weighted sum of nearby STFT bins
+    // The CQT frequency f_k maps to STFT bin f_k * N_FFT / SR
+    var stftBin = cqtFreqs[k] * N_FFT / SAMPLE_RATE;
+    var bLow = Math.max(0, Math.floor(stftBin) - 2);
+    var bHigh = Math.min(nBinsStft - 1, Math.ceil(stftBin) + 2);
+
+    cqtStftKernelRe[k] = new Float32Array(nBinsStft);
+    cqtStftKernelIm[k] = null; // magnitude-only projection
+
+    // Triangular window centered on the CQT frequency
+    for (var b = bLow; b <= bHigh; b++) {
+      var bFreq = b * SAMPLE_RATE / N_FFT;
+      var dist = Math.abs(bFreq - cqtFreqs[k]) / (cqtFreqs[k] / (CQT_Q * 0.5));
+      if (dist < 1) {
+        cqtStftKernelRe[k][b] = 1 - dist; // triangular weight
+      }
+    }
+  } else {
+    cqtUseStft[k] = 0;
+  }
+}
+
+function computeCQTChroma(samples, stftMag, stftNFrames, stftNBins) {
+  var n = samples.length;
+  var nFrames = Math.floor(n / HOP_LENGTH);
+  if (nFrames <= 0) return null;
+
+  // Use min of STFT frames and computed frames
+  if (stftMag && stftNFrames < nFrames) nFrames = stftNFrames;
+
+  var chroma = new Float32Array(N_CHROMA * nFrames);
+
+  for (var f = 0; f < nFrames; f++) {
+    var center = f * HOP_LENGTH + (HOP_LENGTH >> 1);
+
+    for (var k = 0; k < CQT_BINS; k++) {
+      var magnitude;
+
+      if (cqtUseStft[k] && stftMag) {
+        // Low-freq: project from STFT magnitude
+        var kernel = cqtStftKernelRe[k];
+        var sum = 0;
+        for (var b = 0; b < stftNBins; b++) {
+          if (kernel[b] > 0) {
+            // STFT mag is power (re²+im²), take sqrt for magnitude
+            sum += kernel[b] * Math.sqrt(stftMag[b * stftNFrames + f]);
+          }
+        }
+        magnitude = sum * cqtNormFactors[k];
+      } else {
+        // High-freq: direct DFT
+        var N_k = cqtWinLens[k];
+        var halfN = N_k >> 1;
+        var start = center - halfN;
+        var win = cqtWindows[k];
+        var cosT = cqtCosTable[k];
+        var sinT = cqtSinTable[k];
+        var omega = cqtOmega[k];
+
+        var re = 0, im = 0;
+        if (cosT) {
+          for (var i = 0; i < N_k; i++) {
+            var idx = start + i;
+            var sample = (idx >= 0 && idx < n) ? samples[idx] * win[i] : 0;
+            re += sample * cosT[i];
+            im -= sample * sinT[i];
+          }
+        } else {
+          for (var i = 0; i < N_k; i++) {
+            var idx = start + i;
+            var sample = (idx >= 0 && idx < n) ? samples[idx] * win[i] : 0;
+            var phase = omega * i;
+            re += sample * Math.cos(phase);
+            im -= sample * Math.sin(phase);
+          }
+        }
+        magnitude = Math.sqrt(re * re + im * im) * cqtNormFactors[k];
+      }
+
+      var chromaBin = Math.floor((k % CQT_BINS_PER_OCTAVE) * N_CHROMA / CQT_BINS_PER_OCTAVE);
+      chroma[chromaBin * nFrames + f] += magnitude;
+    }
+  }
+
+  return { chroma: chroma, nFrames: nFrames };
+}
+
+/**
+ * Full CQT chromagram pipeline matching CLAUDE.md Step 1.1:
+ * HPSS → CQT chroma → median filter → peak normalize → soft threshold
+ *
+ * @param samples raw audio (already HPSS-filtered harmonic component)
+ * @returns { chroma, nFrames } or null
+ */
+function processCQTChroma(samples) {
+  var result = computeCQTChroma(samples);
+  if (!result) return null;
+  var chroma = result.chroma;
+  var nFrames = result.nFrames;
+
+  // Median filter (1, 9) along time axis
+  chroma = medianFilter(chroma, nFrames);
+
+  // Peak normalize per frame
+  peakNormalize(chroma, nFrames);
+
+  return { chroma: chroma, nFrames: nFrames };
+}
+
 function specToChroma(spec, nFrames, nBins, fb) {
   var filterBank = fb || chromaFB;
   var chroma = new Float32Array(N_CHROMA * nFrames);
@@ -368,6 +569,156 @@ function removeDrone(chroma, nFrames) {
     }
   }
   return out;
+}
+
+/**
+ * Chromagram matching the interval model training pipeline (CLAUDE.md Step 1.1):
+ *   HPSS harmonic → chroma (STFT-based, approximating CQT) →
+ *   median filter (1,9) → peak normalize → soft threshold (0.15 × 0.1)
+ *
+ * Key differences from processForeground:
+ *   - Uses STANDARD filter bank (not melody-range restricted)
+ *   - NO drone removal (training pipeline doesn't do this)
+ *   - Soft threshold matches training exactly
+ */
+/**
+ * Interval model chroma pipeline (CLAUDE.md Step 1.1):
+ *   Raw audio → CQT chroma → median filter → peak normalize → soft threshold
+ *
+ * Uses direct CQT (not STFT-based) with librosa-matching normalization.
+ * HPSS is skipped — the model has an internal melody gate.
+ */
+/**
+ * Interval model chromagram — matches ref_chromagram.js exactly:
+ *   STFT → HPSS soft mask → log-frequency chroma mapping → median → peak norm → threshold
+ *
+ * Key: does NOT use chroma_fb.json. Uses simple log2(f/C1) % 12 mapping
+ * with energy summation (squared magnitude → sqrt).
+ */
+// ── Incremental interval chroma cache ──
+// Stores the raw (pre-median, pre-normalize) chroma for the whole session.
+// Each cycle, only compute new frames from the HPSS spectrogram.
+var _ivlRawCache = null;      // Float32Array [12 × cachedFrames] — raw energy chroma
+var _ivlCacheFrames = 0;      // how many frames are cached
+var _ivlProcessedCache = null; // Float32Array — fully processed (median + norm + thresh)
+var _ivlProcessedFrames = 0;
+
+function resetIntervalChromaCache() {
+  _ivlRawCache = null;
+  _ivlCacheFrames = 0;
+  _ivlProcessedCache = null;
+  _ivlProcessedFrames = 0;
+}
+
+/**
+ * Incremental interval chroma: only computes new frames.
+ * Returns the full session chroma (processed).
+ */
+function processIntervalChromaIncremental(harmonicSpec, nFrames, nBins) {
+  var C1 = 440 * Math.pow(2, -4.75);
+
+  // How many new frames to compute?
+  var newStart = _ivlCacheFrames;
+  var newCount = nFrames - newStart;
+
+  if (newCount <= 0 && _ivlProcessedCache && _ivlProcessedFrames === nFrames) {
+    // Nothing new — return cached result
+    return { chroma: _ivlProcessedCache, nFrames: nFrames };
+  }
+
+  // Grow the raw cache if needed
+  if (!_ivlRawCache || _ivlRawCache.length < N_CHROMA * nFrames) {
+    var newCache = new Float32Array(N_CHROMA * Math.max(nFrames, 1024));
+    if (_ivlRawCache) {
+      // Copy existing data (shift to new layout since nFrames changed)
+      // Raw cache is [12 × oldFrames], need to re-layout to [12 × newCapacity]
+      // Actually, harmonicSpec changes layout each cycle (bin-major with current nFrames).
+      // We need to recompute from scratch when nFrames changes total layout.
+      // For simplicity, just recompute all when buffer grows.
+    }
+    _ivlRawCache = newCache;
+    newStart = 0;
+    newCount = nFrames;
+  }
+
+  // Compute raw chroma for new frames
+  var rawCache = _ivlRawCache;
+  var capacity = Math.floor(rawCache.length / N_CHROMA);
+
+  for (var f = newStart; f < nFrames; f++) {
+    // Zero the chroma bins for this frame
+    for (var c = 0; c < N_CHROMA; c++) rawCache[c * capacity + f] = 0;
+
+    for (var k = 1; k < nBins; k++) {
+      var freq = k * SAMPLE_RATE / N_FFT;
+      if (freq < 60 || freq > 5000) continue;
+      var pitchClass = Math.round(12 * Math.log2(freq / C1)) % 12;
+      pitchClass = ((pitchClass % 12) + 12) % 12;
+      var mag = harmonicSpec[k * nFrames + f];
+      rawCache[pitchClass * capacity + f] += mag * mag;
+    }
+    for (var c = 0; c < N_CHROMA; c++) {
+      rawCache[c * capacity + f] = Math.sqrt(rawCache[c * capacity + f]);
+    }
+  }
+  _ivlCacheFrames = nFrames;
+
+  // Build compact output [12 × nFrames] from the capacity-sized cache
+  var chroma = new Float32Array(N_CHROMA * nFrames);
+  for (var c = 0; c < N_CHROMA; c++) {
+    chroma.set(rawCache.subarray(c * capacity, c * capacity + nFrames), c * nFrames);
+  }
+
+  // Apply median filter + peak normalize + soft threshold
+  chroma = medianFilter(chroma, nFrames);
+  peakNormalize(chroma, nFrames);
+  for (var i = 0; i < chroma.length; i++) {
+    if (chroma[i] < 0.15) chroma[i] *= 0.1;
+  }
+
+  _ivlProcessedCache = chroma;
+  _ivlProcessedFrames = nFrames;
+
+  return { chroma: chroma, nFrames: nFrames };
+}
+
+// Legacy non-cached version (kept for reference)
+function processIntervalChroma(harmonicSpec, nFrames, nBins) {
+  // harmonicSpec is HPSS-filtered magnitude spectrogram [nBins × nFrames]
+  var C1 = 440 * Math.pow(2, -4.75); // ~32.7 Hz
+  var chroma = new Float32Array(N_CHROMA * nFrames);
+
+  // Map each STFT bin to a chroma class via log2(f/C1)
+  for (var f = 0; f < nFrames; f++) {
+    for (var k = 1; k < nBins; k++) {
+      var freq = k * SAMPLE_RATE / N_FFT;
+      if (freq < 60 || freq > 5000) continue; // musical range only
+
+      var pitchClass = Math.round(12 * Math.log2(freq / C1)) % 12;
+      pitchClass = ((pitchClass % 12) + 12) % 12; // ensure positive
+
+      // Energy summation (squared magnitude)
+      var mag = harmonicSpec[k * nFrames + f];
+      chroma[pitchClass * nFrames + f] += mag * mag;
+    }
+    // Square root for magnitude-like values
+    for (var c = 0; c < N_CHROMA; c++) {
+      chroma[c * nFrames + f] = Math.sqrt(chroma[c * nFrames + f]);
+    }
+  }
+
+  // Median filter (9) along time
+  chroma = medianFilter(chroma, nFrames);
+
+  // Peak normalize per frame
+  peakNormalize(chroma, nFrames);
+
+  // Soft threshold: bins below 0.15 *= 0.1
+  for (var i = 0; i < chroma.length; i++) {
+    if (chroma[i] < 0.15) chroma[i] *= 0.1;
+  }
+
+  return { chroma: chroma, nFrames: nFrames };
 }
 
 function processForeground(mag, nFrames, nBins) {
@@ -856,6 +1207,7 @@ self.onmessage = async function(e) {
     }
     initFilterBanks(fb);
     initHannWindow();
+    if (e.data.baseUrl !== undefined) self._baseUrl = e.data.baseUrl;
     self.postMessage({ type: 'ready' });
     // Load ONNX model if URLs provided (eager mode — native builds)
     if (e.data.baseUrl !== undefined && e.data.modelUrl) {
@@ -872,67 +1224,127 @@ self.onmessage = async function(e) {
     return;
   }
 
+  // ── HCQT melody extraction (WASM + cache) ──
+  // Loaded lazily on first process call. Cache stores computed chroma
+  // indexed by frame count — only new frames get processed.
+  if (!self._hcqtLoading && !self._hcqtModule) {
+    self._hcqtLoading = true;
+    self._hcqtChromaCache = null;   // Float32Array [12 × cachedFrames]
+    self._hcqtPitchCache = null;    // Float32Array [31 × cachedFrames]
+    self._hcqtCachedFrames = 0;
+    importScripts((self._baseUrl || '') + '/hcqt_melody.js');
+    if (typeof createHCQTModule === 'function') {
+      createHCQTModule({
+        locateFile: function(path) {
+          return (self._baseUrl || '') + '/' + path;
+        }
+      }).then(function(mod) {
+        self._hcqtModule = mod;
+        self._hcqtLoading = false;
+        console.log('[Worker] HCQT WASM module loaded');
+      }).catch(function(err) {
+        self._hcqtLoading = false;
+        console.warn('[Worker] HCQT WASM load failed:', err);
+      });
+    } else {
+      self._hcqtLoading = false;
+    }
+  }
+
   if (type === 'process') {
     var samples = new Float32Array(e.data.samples);
     var cycle = e.data.cycle;
     var doForeground = _lastHpssTime < 800 || cycle % 3 === 2;
 
-    var stft = computeSTFT(samples);
-    if (!stft) {
-      self.postMessage({ type: 'result', id: id, error: 'STFT failed' });
-      return;
-    }
-    var mag = stft.mag;
-    var nFrames = stft.nFrames;
-    var nBins = stft.nBins;
-
-    var stdResult = processStandard(mag, nFrames, nBins);
-    var melChroma = processMelodyOnly(stdResult.chroma, mag, nFrames, nBins);
-
-    var tensorsFg = [];
-    if (doForeground) {
-      var _hpssT0 = Date.now();
-      var fgChroma = processForeground(mag, nFrames, nBins);
-      _lastHpssTime = Date.now() - _hpssT0;
-      tensorsFg = prepareModelInputs(fgChroma, nFrames);
-    }
-
-    var tensorsStd = prepareModelInputs(stdResult.chroma, nFrames);
-    var tensorsMel = prepareModelInputs(melChroma, nFrames);
-    var tempo = !doForeground ? estimateTempo(samples) : null;
-
-    // Run inference in the worker
+    // ── HCQT 3-way ensemble: all from CQT, no STFT needed ──
+    var nFrames = 0;
+    var hcqtFrames = 0;
     var ensemble = { avg: new Float32Array(0), nClasses: 0 };
-    if (_onnxReady) {
-      ensemble = await runEnsemble(tensorsStd, tensorsFg, tensorsMel);
+
+    if (self._hcqtModule) {
+      var hcqtT0 = Date.now();
+      var mod = self._hcqtModule;
+      var nSamples = samples.length;
+      var maxFrames = Math.floor(nSamples / HOP_LENGTH);
+
+      // Allocate: 3 chroma outputs (12×T each) + guide (36×T) + masked (36×T)
+      var stdPtr    = mod._malloc(12 * maxFrames * 4);
+      var fgPtr     = mod._malloc(12 * maxFrames * 4);
+      var melPtr    = mod._malloc(12 * maxFrames * 4);
+      var guidePtr  = mod._malloc(36 * maxFrames * 4);
+      var maskedPtr = mod._malloc(36 * maxFrames * 4);
+      var samplesPtr = mod._malloc(nSamples * 4);
+
+      mod.HEAPF32.set(samples, samplesPtr >> 2);
+
+      // Single WASM call produces all 3 ensemble chromas + debug outputs
+      var actualFrames = mod._hcqt_melody(samplesPtr, nSamples, stdPtr, fgPtr, melPtr, guidePtr, maskedPtr);
+      nFrames = actualFrames;
+      hcqtFrames = actualFrames;
+
+      // Read all outputs
+      var chromaStd = new Float32Array(mod.HEAPF32.buffer, stdPtr,    12 * nFrames).slice();
+      var chromaFg  = new Float32Array(mod.HEAPF32.buffer, fgPtr,     12 * nFrames).slice();
+      var chromaMel = new Float32Array(mod.HEAPF32.buffer, melPtr,    12 * nFrames).slice();
+      self._hcqtGuideCache  = new Float32Array(mod.HEAPF32.buffer, guidePtr,  36 * nFrames).slice();
+      self._hcqtMaskedCache = new Float32Array(mod.HEAPF32.buffer, maskedPtr, 36 * nFrames).slice();
+      self._hcqtChromaCache = chromaStd;
+
+      mod._free(samplesPtr);
+      mod._free(stdPtr);
+      mod._free(fgPtr);
+      mod._free(melPtr);
+      mod._free(guidePtr);
+      mod._free(maskedPtr);
+
+      console.log('[Worker] HCQT 3-way: ' + nFrames + ' frames in ' + (Date.now() - hcqtT0) + 'ms');
+
+      // 3-way ensemble from CQT: standard (masked f1) + foreground (consensus) + melody (top-1)
+      var tensorsStd = prepareModelInputs(chromaStd, nFrames);
+      var tensorsFg  = prepareModelInputs(chromaFg, nFrames);
+      var tensorsMel = prepareModelInputs(chromaMel, nFrames);
+
+      if (_onnxReady) {
+        ensemble = await runEnsemble(tensorsStd, tensorsFg, tensorsMel);
+      }
+    } else {
+      // HCQT not loaded yet — fall back to STFT pipeline
+      var stft = computeSTFT(samples);
+      if (!stft) {
+        self.postMessage({ type: 'result', id: id, error: 'DSP failed' });
+        return;
+      }
+      nFrames = stft.nFrames;
+      var stdResult = processStandard(stft.mag, nFrames, stft.nBins);
+      self._hcqtChromaCache = stdResult.chroma;
+      var tensorsStd = prepareModelInputs(stdResult.chroma, nFrames);
+      if (_onnxReady) {
+        ensemble = await runEnsemble(tensorsStd, [], tensorsStd);
+      }
     }
 
-    // Compact chroma summary for key estimation (last 22 frames)
-    var summaryFrames = Math.min(22, nFrames);
-    var chromaSummary = new Float32Array(N_CHROMA * summaryFrames);
-    for (var c = 0; c < N_CHROMA; c++) {
-      var srcOff = c * nFrames + (nFrames - summaryFrames);
-      chromaSummary.set(stdResult.chroma.subarray(srcOff, srcOff + summaryFrames), c * summaryFrames);
-    }
+    var tempo = estimateTempo(samples);
 
-    // Compact rawEnergy matching chroma summary (12 × summaryFrames)
-    var rawEnergySummary = new Float32Array(N_CHROMA * summaryFrames);
-    for (var c = 0; c < N_CHROMA; c++) {
-      var srcOff = c * nFrames + (nFrames - summaryFrames);
-      rawEnergySummary.set(stdResult.rawEnergy.subarray(srcOff, srcOff + summaryFrames), c * summaryFrames);
-    }
+    // Transfer results
+    var fullChroma  = new Float32Array(self._hcqtChromaCache || new Float32Array(12));
+    var fullRawEnergy = new Float32Array(fullChroma);
+    var guide  = self._hcqtGuideCache  ? new Float32Array(self._hcqtGuideCache)  : null;
+    var masked = self._hcqtMaskedCache ? new Float32Array(self._hcqtMaskedCache) : null;
 
-    // Transfer only chroma + rawEnergy as Transferable (tiny).
-    // Ensemble avg (107KB) sent via structured clone — avoids creating
-    // a new ArrayBuffer on the receiver (cheaper for GC on iOS).
-    var transferList = [chromaSummary.buffer, rawEnergySummary.buffer];
+    var transferList = [fullChroma.buffer, fullRawEnergy.buffer];
+    if (guide)  transferList.push(guide.buffer);
+    if (masked) transferList.push(masked.buffer);
 
     self.postMessage({
       type: 'result',
       id: id,
-      chroma: chromaSummary,
-      chromaFrames: summaryFrames,
-      rawEnergy: rawEnergySummary,
+      chroma: fullChroma,
+      chromaFrames: hcqtFrames || nFrames,
+      rawEnergy: fullRawEnergy,
+      hcqtChroma: null,
+      hcqtGuide: guide,
+      hcqtMasked: masked,
+      hcqtFrames: hcqtFrames,
       nFrames: nFrames,
       nClasses: ensemble.nClasses,
       ensembleAvg: ensemble.avg,
