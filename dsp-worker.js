@@ -1018,17 +1018,27 @@ function estimateTempo(samples) {
   if (maxFlux < 1e-10) return null;
   for (var i = 0; i < nFrames; i++) flux[i] /= maxFlux;
 
-  var threshold = 0.15;
+  // Threshold lowered from 0.15 → 0.06 — Irish trad sessions are usually
+  // unaccompanied (fiddle / flute / whistle / pipes) so onset spectral-flux
+  // peaks are modest compared to drum-driven music.  Vocal removal also
+  // strips some attack transients; even on raw samples (which we now use)
+  // a bowed note at uniform dynamics doesn't produce huge flux changes.
+  var threshold = 0.06;
+  // Also relax local-max from 5-frame to 3-frame so closely spaced notes
+  // (sixteenths in a reel: ~0.13 s apart) don't get filtered out.
   var onsets = [];
-  for (var i = 2; i < nFrames - 2; i++) {
+  for (var i = 1; i < nFrames - 1; i++) {
     if (flux[i] > threshold &&
-      flux[i] > flux[i - 1] && flux[i] > flux[i - 2] &&
-      flux[i] >= flux[i + 1] && flux[i] >= flux[i + 2]) {
+      flux[i] > flux[i - 1] &&
+      flux[i] >= flux[i + 1]) {
       onsets.push(i * hopLen / SAMPLE_RATE);
     }
   }
 
-  if (onsets.length < 4) return null;
+  if (onsets.length < 4) {
+    console.log('[Worker] tempo: only ' + onsets.length + ' onsets passed threshold (need 4+) — flux maxFlux=' + maxFlux.toFixed(4));
+    return null;
+  }
 
   var iois = [];
   for (var i = 1; i < onsets.length; i++) {
@@ -1300,6 +1310,13 @@ self.onmessage = async function(e) {
 
   if (type === 'process') {
     var samples = new Float32Array(e.data.samples);
+    // Optional raw (pre-vocal-removal) samples used solely for tempo
+    // estimation.  Vocal removal strips drums / percussive transients which
+    // is what the spectral-flux onset detector relies on, so without this
+    // tempo would be null on every cycle.
+    var samplesRawForTempo = e.data.samplesRawForTempo
+      ? new Float32Array(e.data.samplesRawForTempo)
+      : null;
     var cycle = e.data.cycle;
     var doForeground = _lastHpssTime < 800 || cycle % 3 === 2;
 
@@ -1379,7 +1396,14 @@ self.onmessage = async function(e) {
       console.log('[Worker] HCQT not ready, skipping inference');
     }
 
-    var tempo = estimateTempo(samples);
+    // Tempo on raw samples when available — denoised audio has no drums.
+    var tempo = estimateTempo(samplesRawForTempo || samples);
+    if (tempo === null && samplesRawForTempo) {
+      // Diagnostic: confirm we tried raw and it still came back null
+      console.log('[Worker] tempo: null even on raw samples (len=' + samplesRawForTempo.length + ')');
+    } else if (tempo !== null) {
+      console.log('[Worker] tempo: ' + tempo + ' bpm (source=' + (samplesRawForTempo ? 'raw' : 'cleaned') + ')');
+    }
 
     // Transfer results
     var fullChroma  = new Float32Array(self._hcqtChromaCache || new Float32Array(12));
