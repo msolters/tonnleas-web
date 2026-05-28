@@ -59,11 +59,14 @@ async function ensureBackend(wasmPathPrefix) {
     }
     await tf.setBackend('wasm');
     await tf.ready();
-    // eslint-disable-next-line no-console
-    console.log('[bp-worker] tf backend =', tf.getBackend());
+    if (_dev) console.log('[bp-worker] tf backend =', tf.getBackend());
   })();
   return backendReady;
 }
+
+// Dev flag — set by the main thread on init. False in prod gh-pages
+// builds so the worker's diagnostic logs stay off the user's console.
+let _dev = false;
 
 function loadModel(modelUrl) {
   if (modelPromise) return modelPromise;
@@ -150,6 +153,7 @@ self.onmessage = async (e) => {
   const msg = e.data;
   try {
     if (msg.type === 'init') {
+      _dev = !!msg.dev;
       await ensureBackend(msg.wasmPathPrefix);
       await loadModel(msg.modelUrl);
       self.postMessage({ type: 'ready' });

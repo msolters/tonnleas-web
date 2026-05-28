@@ -159,7 +159,14 @@ async function fetchJson(url) {
     return r.json();
 }
 
-async function init({ baseUrl, assetsBase, inputSr, modelFile }) {
+/** Dev flag — set by the main thread on init. False on prod gh-pages
+ *  builds so the worker's own diagnostic logs stay off the user's
+ *  console. */
+let _dev = false;
+const _dlog = (...args) => { if (_dev) console.log(...args); };
+
+async function init({ baseUrl, assetsBase, inputSr, modelFile, dev }) {
+    _dev = !!dev;
     _baseUrl = baseUrl || '';
     _assetsBase = assetsBase || '';
     _inputSr = inputSr | 0;
@@ -185,75 +192,162 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile }) {
     self.ort.env.wasm.numThreads = _canThread
         ? Math.min(4, (self.navigator && self.navigator.hardwareConcurrency) || 1)
         : 1;
-    if (typeof console !== 'undefined') {
-        console.log('[#362 worker] wasm threads=' + self.ort.env.wasm.numThreads +
-            ' (crossOriginIsolated=' + (self.crossOriginIsolated === true) + ')');
-    }
+    _dlog('[#362 worker] wasm threads=' + self.ort.env.wasm.numThreads +
+        ' (crossOriginIsolated=' + (self.crossOriginIsolated === true) + ')');
 
-    // Fetch the model. Some exports are too large to ship in the
-    // gh-pages git bundle (FP16 is 131 MB, above GitHub's 100 MB per-file
-    // limit) so they live on a GitHub Release; the worker tries the local
-    // path first (works on dev where the file is on disk) and falls back
-    // to the release URL when that 404s (works on gh-pages).
+    // Model-fetch strategy with multiple fallback candidates. Some
+    // exports (FP16, 131 MB) exceed GitHub's 100 MB per-file limit and
+    // can't ship as a single file on gh-pages. We split them into
+    // shards locally (each ≤ 100 MB) and reassemble in the worker.
+    // The worker tries the candidates in order and uses the first one
+    // that works:
+    //   1. sharded local (works on gh-pages and dev)
+    //   2. single-file local (works on dev / native bundles where the
+    //      whole file is on disk)
+    //   3. GitHub release single-file (CORS-blocked from github.io but
+    //      kept as a last resort — works elsewhere)
+    //   4. degrade to INT8 QDQ (always in the gh-pages bundle as a
+    //      single file, so this is the ultimate safety net)
     const RELEASE_FALLBACKS = {
         'model_nokeycanon_fp16.onnx':
             'https://github.com/msolters/tonnleas-web/releases/download/models-362-lr768/model_nokeycanon_fp16.onnx',
         'model_nokeycanon_int8_qdq.onnx':
             'https://github.com/msolters/tonnleas-web/releases/download/models-362-lr768/model_nokeycanon_int8_qdq.onnx',
     };
-    const filename = modelFile || 'model_nokeycanon_fp16.onnx';
-    const localUrl = `${_assetsBase}/${filename}`;
-    const releaseUrl = RELEASE_FALLBACKS[filename] || null;
-    console.log(`[#362 worker] init.modelFile=${modelFile ?? '(undefined)'} → trying local ${localUrl}`);
-    let resp = await fetch(localUrl, { credentials: 'same-origin' });
-    let modelUrl = localUrl;
-    // Sanity gate: dev server might 200-OK with HTML on a path it
-    // doesn't recognize, which then trips ORT with "protobuf parsing
-    // failed". Treat HTML/JSON the same as a 404 — fall through to the
-    // release fallback.
-    const localCt = resp.ok ? (resp.headers.get('content-type') ?? '') : '';
-    const localBadType = localCt.includes('text/html') || localCt.includes('application/json');
-    if ((!resp.ok || localBadType) && releaseUrl) {
-        console.log(`[#362 worker] local fetch (${resp.status}${localBadType ? ' bad CT="' + localCt + '"' : ''}) — falling back to release ${releaseUrl}`);
-        resp = await fetch(releaseUrl);  // no credentials → safe cross-origin
-        modelUrl = releaseUrl;
+    // Models that ship sharded — listed here as their part count.
+    // Pieces are fetched at `${file}.part0`, `${file}.part1`, … and
+    // concatenated in order to reconstruct the original bytes.
+    const SHARDED_LOCAL = {
+        'model_nokeycanon_fp16.onnx': 2,
+    };
+    const requestedFilename = modelFile || 'model_nokeycanon_fp16.onnx';
+    const candidates = [];
+    const pushFile = (name) => {
+        const partCount = SHARDED_LOCAL[name];
+        if (partCount) {
+            const shardUrls = [];
+            for (let i = 0; i < partCount; i++) shardUrls.push(`${_assetsBase}/${name}.part${i}`);
+            candidates.push({ kind: 'shards', urls: shardUrls, label: `local sharded ${name} (×${partCount})` });
+        }
+        candidates.push({ kind: 'single', url: `${_assetsBase}/${name}`, sameOrigin: true, label: `local ${name}` });
+        if (RELEASE_FALLBACKS[name]) {
+            candidates.push({ kind: 'single', url: RELEASE_FALLBACKS[name], sameOrigin: false, label: `release ${name}` });
+        }
+    };
+    pushFile(requestedFilename);
+    if (requestedFilename !== 'model_nokeycanon_int8_qdq.onnx') {
+        // FP16 (or any non-INT8) requested → fall back to INT8 (single
+        // file in bundle) if all the primary candidates fail.
+        pushFile('model_nokeycanon_int8_qdq.onnx');
     }
-    if (!resp.ok) throw new Error(`fetch ${modelUrl} → ${resp.status}`);
-    const ct = resp.headers.get('content-type') ?? '';
-    if (ct.includes('text/html') || ct.includes('application/json')) {
-        throw new Error(`fetch ${modelUrl} returned content-type "${ct}" — not an ONNX model`);
-    }
-    const total = +(resp.headers.get('content-length') ?? '0');
-    const reader = resp.body?.getReader();
-    if (!reader) throw new Error('no body stream from model fetch');
-    const chunks = [];
-    let loaded = 0;
-    self.postMessage({ type: 'model-progress', loaded: 0, total });
-    let lastPost = 0;
-    while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        chunks.push(value);
-        loaded += value.byteLength;
-        // Throttle progress events to ~30 Hz max.
-        const now = Date.now();
-        if (now - lastPost > 33) {
-            self.postMessage({ type: 'model-progress', loaded, total });
-            lastPost = now;
+
+    // ── Fetch helpers: each returns a single Uint8Array on success ──
+    async function fetchSingle({ url, sameOrigin, label }, postProgress) {
+        try {
+            const r = await fetch(url, sameOrigin ? { credentials: 'same-origin' } : undefined);
+            if (!r.ok) return { buf: null, reason: `HTTP ${r.status}` };
+            const ct = r.headers.get('content-type') ?? '';
+            if (ct.includes('text/html') || ct.includes('application/json')) {
+                return { buf: null, reason: `bad content-type "${ct}"` };
+            }
+            const total = +(r.headers.get('content-length') ?? '0');
+            const reader = r.body?.getReader();
+            if (!reader) return { buf: null, reason: 'no body stream' };
+            const chunks = [];
+            let loaded = 0;
+            if (postProgress) postProgress(0, total);
+            let lastPost = 0;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                loaded += value.byteLength;
+                const nowT = Date.now();
+                if (postProgress && nowT - lastPost > 33) {
+                    postProgress(loaded, total);
+                    lastPost = nowT;
+                }
+            }
+            if (postProgress) postProgress(loaded, total || loaded);
+            const buf = new Uint8Array(loaded);
+            let off = 0;
+            for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+            return { buf, reason: 'ok', label };
+        } catch (err) {
+            return { buf: null, reason: err?.message ?? 'fetch error' };
         }
     }
-    self.postMessage({ type: 'model-progress', loaded, total: total || loaded });
-    // After download, ORT spends ~1-3 s building the session (parsing the
-    // graph, initializing wasm execution provider, allocating tensors).
-    // No event surface for that — fire a 'model-warming' so the splash
-    // screen can switch the status line during the otherwise-silent gap.
-    self.postMessage({ type: 'model-warming' });
-    // Concatenate into one ArrayBuffer for ORT.
-    const buf = new Uint8Array(loaded);
-    {
-        let off = 0;
-        for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+    async function fetchSharded({ urls, label }, postProgress) {
+        // Fetch all parts in parallel for max throughput; reassemble in
+        // declared order. Progress is the sum of all loaded bytes so far
+        // — totals are summed across the parts.
+        try {
+            const partLoaded = new Array(urls.length).fill(0);
+            const partTotal = new Array(urls.length).fill(0);
+            const parts = await Promise.all(urls.map(async (u, i) => {
+                const r = await fetch(u, { credentials: 'same-origin' });
+                if (!r.ok) throw new Error(`shard ${i} (${u}) → HTTP ${r.status}`);
+                const ct = r.headers.get('content-type') ?? '';
+                if (ct.includes('text/html') || ct.includes('application/json')) {
+                    throw new Error(`shard ${i} bad content-type "${ct}"`);
+                }
+                partTotal[i] = +(r.headers.get('content-length') ?? '0');
+                const reader = r.body?.getReader();
+                if (!reader) throw new Error(`shard ${i} no body stream`);
+                const chunks = [];
+                let lastPost = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    partLoaded[i] += value.byteLength;
+                    const nowT = Date.now();
+                    if (postProgress && nowT - lastPost > 33) {
+                        let totL = 0, totT = 0;
+                        for (let j = 0; j < urls.length; j++) { totL += partLoaded[j]; totT += partTotal[j]; }
+                        postProgress(totL, totT);
+                        lastPost = nowT;
+                    }
+                }
+                const sz = partLoaded[i];
+                const buf = new Uint8Array(sz);
+                let off = 0;
+                for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+                return buf;
+            }));
+            const total = parts.reduce((a, p) => a + p.byteLength, 0);
+            if (postProgress) postProgress(total, total);
+            const combined = new Uint8Array(total);
+            let off = 0;
+            for (const p of parts) { combined.set(p, off); off += p.byteLength; }
+            return { buf: combined, reason: 'ok', label };
+        } catch (err) {
+            return { buf: null, reason: err?.message ?? 'shard fetch error' };
+        }
     }
+
+    _dlog(`[#362 worker] init.modelFile=${modelFile ?? '(undefined)'} → chain: ${candidates.map(t => t.label).join(' → ')}`);
+    const postProgress = (loaded, total) => self.postMessage({ type: 'model-progress', loaded, total });
+    let buf = null;
+    let modelLabel = null;
+    for (const candidate of candidates) {
+        const { buf: b, reason, label } = candidate.kind === 'shards'
+            ? await fetchSharded(candidate, postProgress)
+            : await fetchSingle(candidate, postProgress);
+        if (b) {
+            buf = b;
+            modelLabel = label;
+            break;
+        }
+        _dlog(`[#362 worker] ${candidate.label} unavailable: ${reason}`);
+    }
+    if (!buf) throw new Error(`exhausted model candidates: ${candidates.map(t => t.label).join(', ')}`);
+    _dlog(`[#362 worker] loaded via ${modelLabel} (${buf.byteLength} bytes)`);
+    // After download, ORT spends ~1-3 s building the session (parsing
+    // the graph, initializing wasm execution provider, allocating
+    // tensors). Fire model-warming so the splash can update status
+    // during the otherwise-silent gap.
+    self.postMessage({ type: 'model-warming' });
     _session = await self.ort.InferenceSession.create(
         buf,
         { executionProviders: ['wasm'], graphOptimizationLevel: 'all' },
