@@ -4,18 +4,19 @@
  *   1. WASM HCQT-fold12 front-end (hcqt_fold12.js — single-source-of-truth C
  *      compiled to wasm-simd128). Resampling included in WASM.
  *   2. onnxruntime-web in this same worker runs model_nokeycanon_fp16.onnx
- *      (362-lr768 FP16, factored low-rank head — 131 MB, R1=58/73). INT8
- *      QDQ (63 MB, R1=60/73) is offline-better and beat FP16 on the
- *      headless eval harness (fake-audio playback of a captured session
- *      WAV) — but LIVE phone-mic-in-room audio has reverb / AGC behavior
- *      / mic-response artifacts the fake-mic path doesn't reproduce, and
- *      INT8's flatter softmax produces confident wrong commits on that
- *      path (e.g. "Silver Spire" mis-IDed mid-Wise-Maid). The stale-lock
- *      decay still helps, but doesn't close the gap on live audio. The
- *      Markov decay in useTuneIdentifier is kept (load-bearing if anyone
- *      ever toggles INT8 via ?model362=int8). ORT-Web 1.18 is pinned for
- *      iOS WebKit; 1.19+ needs SharedArrayBuffer that Safari withholds.
- *      The .wasm execution provider keeps ONNX off the main thread too.
+ *      (362-lr768 FP16, factored low-rank head — 131 MB, R1=58/73).
+ *      FP16 is the canonical default; INT8 QDQ (63 MB, R1=60/73) is
+ *      reachable via `?model362=int8` for compression-campaign
+ *      experimentation but currently produces sustained confident
+ *      wrong commits on real session audio (e.g. classifying Blarney
+ *      Pilgrim as four different tunes over 90 s), so it's not ready
+ *      to be the user-facing default. The upstream challenger-streak
+ *      gate, Markov stale-lock decay, sheet-latch margin gate, river
+ *      committed-tune source, and Foote merge-guard all stay — they
+ *      help FP16 too and they're load-bearing for any future INT8
+ *      re-enablement. ORT-Web 1.18 is pinned for iOS WebKit; 1.19+
+ *      needs SharedArrayBuffer that Safari withholds. The .wasm
+ *      execution provider keeps ONNX off the main thread.
  *   3. KeyCanon rotation applied to each (12, 344) window in-place before
  *      inference (banker's round, bit-exact port of keycanon_reference.py).
  *   4. Per-window softmax → mean across windows → per-tune MAX over class
@@ -189,20 +190,38 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile }) {
             ' (crossOriginIsolated=' + (self.crossOriginIsolated === true) + ')');
     }
 
-    // Fetch the model ourselves so we can stream-track download progress
-    // and post 'model-progress' messages to the main thread for a real
-    // progress bar (otherwise ORT.InferenceSession.create downloads
-    // opaquely with no events). The model file is ~63 MB so this matters.
-    const modelUrl = `${_assetsBase}/${modelFile || 'model_nokeycanon_int8_qdq.onnx'}`;
-    console.log(`[#362 worker] init.modelFile=${modelFile ?? '(undefined)'} → fetching ${modelUrl}`);
-    const resp = await fetch(modelUrl, { credentials: 'same-origin' });
+    // Fetch the model. Some exports are too large to ship in the
+    // gh-pages git bundle (FP16 is 131 MB, above GitHub's 100 MB per-file
+    // limit) so they live on a GitHub Release; the worker tries the local
+    // path first (works on dev where the file is on disk) and falls back
+    // to the release URL when that 404s (works on gh-pages).
+    const RELEASE_FALLBACKS = {
+        'model_nokeycanon_fp16.onnx':
+            'https://github.com/msolters/tonnleas-web/releases/download/models-362-lr768/model_nokeycanon_fp16.onnx',
+        'model_nokeycanon_int8_qdq.onnx':
+            'https://github.com/msolters/tonnleas-web/releases/download/models-362-lr768/model_nokeycanon_int8_qdq.onnx',
+    };
+    const filename = modelFile || 'model_nokeycanon_fp16.onnx';
+    const localUrl = `${_assetsBase}/${filename}`;
+    const releaseUrl = RELEASE_FALLBACKS[filename] || null;
+    console.log(`[#362 worker] init.modelFile=${modelFile ?? '(undefined)'} → trying local ${localUrl}`);
+    let resp = await fetch(localUrl, { credentials: 'same-origin' });
+    let modelUrl = localUrl;
+    // Sanity gate: dev server might 200-OK with HTML on a path it
+    // doesn't recognize, which then trips ORT with "protobuf parsing
+    // failed". Treat HTML/JSON the same as a 404 — fall through to the
+    // release fallback.
+    const localCt = resp.ok ? (resp.headers.get('content-type') ?? '') : '';
+    const localBadType = localCt.includes('text/html') || localCt.includes('application/json');
+    if ((!resp.ok || localBadType) && releaseUrl) {
+        console.log(`[#362 worker] local fetch (${resp.status}${localBadType ? ' bad CT="' + localCt + '"' : ''}) — falling back to release ${releaseUrl}`);
+        resp = await fetch(releaseUrl);  // no credentials → safe cross-origin
+        modelUrl = releaseUrl;
+    }
     if (!resp.ok) throw new Error(`fetch ${modelUrl} → ${resp.status}`);
-    // Sanity gate: Metro / dev server might 200-OK with HTML on a path
-    // it doesn't recognize as a static file, which then trips ORT with
-    // a confusing "protobuf parsing failed". Fail FAST with the real URL.
     const ct = resp.headers.get('content-type') ?? '';
     if (ct.includes('text/html') || ct.includes('application/json')) {
-        throw new Error(`fetch ${modelUrl} returned content-type "${ct}" — not an ONNX model (likely a 404/dev-server fallback)`);
+        throw new Error(`fetch ${modelUrl} returned content-type "${ct}" — not an ONNX model`);
     }
     const total = +(resp.headers.get('content-length') ?? '0');
     const reader = resp.body?.getReader();
@@ -440,48 +459,11 @@ async function processBuffer() {
     const logits = out[_outputName].data;
     const nClasses = logits.length / nWindows;
 
-    /* ── A/B-probe stats (compression-campaign diagnostic) ──
-     * Computed once per cycle, ~28k×nWindows passes (cheap). Tells us
-     * whether INT8 vs FP16 differ in (a) raw logit magnitude — calibration
-     * bug suspect, (b) per-window softmax peakedness — flatness/margin,
-     * (c) per-window argmax agreement — jitter at the source.
-     * Log line is parseable JSON for offline diff. */
-    let logitAbsSum = 0;
-    let logitMaxSum = 0;
-    let logitMinSum = 0;
-    let winTop1Sum = 0;
-    let winTop2Sum = 0;
-    let winEntropySum = 0;
-    const winArgmaxes = new Int32Array(nWindows);
-
-    /* Per-window softmax → mean across windows + per-window stats */
+    /* Per-window softmax → mean across windows */
     const meanProbs = new Float32Array(nClasses);
     for (let w = 0; w < nWindows; w++) {
-        const base = w * nClasses;
-        let lmin = Infinity, lmax = -Infinity, lAbsSum = 0;
-        for (let c = 0; c < nClasses; c++) {
-            const v = logits[base + c];
-            _tmpProbs[c] = v;
-            if (v < lmin) lmin = v;
-            if (v > lmax) lmax = v;
-            lAbsSum += v < 0 ? -v : v;
-        }
-        logitAbsSum += lAbsSum / nClasses;
-        logitMinSum += lmin;
-        logitMaxSum += lmax;
+        for (let c = 0; c < nClasses; c++) _tmpProbs[c] = logits[w * nClasses + c];
         softmaxInPlace(_tmpProbs);
-        /* Top-1 / Top-2 / argmax / entropy of this window's softmax */
-        let t1p = -1, t2p = -1, t1i = -1, ent = 0;
-        for (let c = 0; c < nClasses; c++) {
-            const p = _tmpProbs[c];
-            if (p > t1p) { t2p = t1p; t1p = p; t1i = c; }
-            else if (p > t2p) { t2p = p; }
-            if (p > 1e-12) ent -= p * Math.log(p);
-        }
-        winTop1Sum += t1p;
-        winTop2Sum += t2p;
-        winEntropySum += ent;
-        winArgmaxes[w] = t1i;
         for (let c = 0; c < nClasses; c++) meanProbs[c] += _tmpProbs[c];
     }
     const invNW = 1 / nWindows;
@@ -491,35 +473,6 @@ async function processBuffer() {
     const tuneProbs = new Float32Array(_nTunes);
     aggregatePerTuneMax(meanProbs, tuneProbs);
     const topK = topKFromTuneProbs(tuneProbs, TOP_K);
-
-    /* tuneProbs top-1 / top-2 margin — the value that actually feeds
-     * the downstream lock decision. */
-    let tp1 = -1, tp2 = -1;
-    for (let i = 0; i < _nTunes; i++) {
-        const v = tuneProbs[i];
-        if (v > tp1) { tp2 = tp1; tp1 = v; }
-        else if (v > tp2) { tp2 = v; }
-    }
-    /* Distinct argmaxes across windows = jitter. 1 = perfectly stable. */
-    const seen = new Set();
-    for (let w = 0; w < nWindows; w++) seen.add(winArgmaxes[w]);
-    const jitter = seen.size;
-
-    const stats = {
-        nW: nWindows,
-        logitAbsMean: +(logitAbsSum * invNW).toFixed(4),
-        logitMin: +(logitMinSum * invNW).toFixed(3),
-        logitMax: +(logitMaxSum * invNW).toFixed(3),
-        winTop1: +(winTop1Sum * invNW).toFixed(4),
-        winTop2: +(winTop2Sum * invNW).toFixed(4),
-        winMargin: +((winTop1Sum - winTop2Sum) * invNW).toFixed(4),
-        winEntropy: +(winEntropySum * invNW).toFixed(3),
-        winArgmaxJitter: jitter,
-        tuneTop1: +tp1.toFixed(4),
-        tuneTop2: +tp2.toFixed(4),
-        tuneMargin: +(tp1 - tp2).toFixed(4),
-    };
-    console.log('[ab-probe] ' + JSON.stringify(stats));
 
     return { topK, tuneProbs, chromaSummary, dspMs, infMs, nWindows };
 }
