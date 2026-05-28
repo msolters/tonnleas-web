@@ -24,8 +24,11 @@
  * Audio is sent as the underlying ArrayBuffer for zero-copy transfer.
  */
 
-importScripts('/tfjs/tf.min.js');
-importScripts('/tfjs/tf-backend-wasm.min.js');
+// Relative paths so the worker resolves tfjs against ITS OWN URL, not
+// the origin root — gh-pages serves under /tonnleas-web/ so an absolute
+// `/tfjs/…` would 404. Same import order, just origin-agnostic.
+importScripts('tfjs/tf.min.js');
+importScripts('tfjs/tf-backend-wasm.min.js');
 
 const OUTPUT_TO_TENSOR_NAME = {
   contours: 'Identity',
