@@ -1171,7 +1171,16 @@ async function loadOnnxModel(baseUrl, modelUrl) {
   try {
     // Load ort runtime
     importScripts(baseUrl + '/ort.min.js');
-    self.ort.env.wasm.numThreads = 1;
+    // Multi-threaded WASM requires SharedArrayBuffer (cross-origin
+    // isolation via COOP/COEP — supplied by coi-serviceworker on GitHub
+    // Pages). Use up to 4 threads when available, else single-thread.
+    // Degrades gracefully: no SAB → numThreads = 1, no crash.
+    var _canThread =
+      (typeof self.crossOriginIsolated === 'undefined' || self.crossOriginIsolated) &&
+      typeof SharedArrayBuffer !== 'undefined';
+    self.ort.env.wasm.numThreads = _canThread
+      ? Math.min(4, (self.navigator && self.navigator.hardwareConcurrency) || 1)
+      : 1;
     self.ort.env.wasm.wasmPaths = baseUrl + '/';
     // Limit WASM proxy to reduce memory
     self.ort.env.wasm.proxy = false;

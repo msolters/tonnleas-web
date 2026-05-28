@@ -1,0 +1,276 @@
+<!doctype html>
+<!--
+  Standalone in-browser demo for the model #362 WASM+ONNX pipeline.
+  Doesn't touch the React app, doesn't touch the v6 engine — just spawns
+  dsp-worker-362.js, lets you drop a WAV, and displays top-K predictions.
+  Useful for end-to-end browser-side validation before plumbing the
+  pipeline into the production engine.
+
+  Serve via the dev server (or any static host) and visit /test-362.html.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>model #362 — browser DSP+inference test</title>
+<style>
+  body { font: 14px/1.45 system-ui, sans-serif; background: #0a0e0d; color: #d2dccf; margin: 24px; }
+  h1   { font-weight: 300; font-size: 18px; letter-spacing: 1px; color: #8fbfa0; }
+  .drop { border: 1px dashed #2f4438; border-radius: 8px; padding: 32px; text-align: center;
+          color: #5e7a68; transition: all .15s; }
+  .drop.over { border-color: #8fbfa0; color: #8fbfa0; background: #112018; }
+  pre  { background: #050807; border: 1px solid #1a2620; padding: 10px; border-radius: 6px;
+         overflow: auto; font: 12px/1.5 ui-monospace, monospace; }
+  .row { display: flex; gap: 16px; margin-top: 16px; }
+  .col { flex: 1; }
+  .meta { color: #5e7a68; font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #1a2620; }
+  th { color: #5e7a68; font-weight: 400; font-size: 11px; letter-spacing: 1px; text-transform: uppercase; }
+  .score { color: #8fbfa0; font-variant-numeric: tabular-nums; }
+  .tid { color: #5e7a68; font-variant-numeric: tabular-nums; }
+  #status { color: #5e7a68; }
+  .ok { color: #8fbfa0; }
+  .err { color: #c46060; }
+  .rec { display: inline-flex; gap: 12px; align-items: center; margin: 16px 0; }
+  button { background: #112018; border: 1px solid #2f4438; color: #d2dccf; padding: 8px 16px;
+           border-radius: 6px; font: inherit; cursor: pointer; }
+  button:hover { border-color: #8fbfa0; }
+  button.rec-on { background: #2a1414; border-color: #c46060; color: #e8a0a0; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .level { display: inline-block; width: 160px; height: 8px; background: #1a2620; border-radius: 4px;
+           overflow: hidden; vertical-align: middle; }
+  /* span is inline by default — height/width need display:block to take effect. */
+  .level-fill { display: block; height: 100%; width: 0%;
+                background: linear-gradient(90deg, #5e7a68, #8fbfa0);
+                transition: width 50ms linear; }
+</style>
+</head>
+<body>
+<h1>Tonnléas · model #362 — in-browser pipeline test</h1>
+<p id="status">loading…</p>
+
+<div class="rec">
+  <button id="recBtn">● record</button>
+  <span class="meta" id="recTime">—</span>
+  <span class="level"><span class="level-fill" id="recLevel"></span></span>
+</div>
+
+<div id="drop" class="drop">…or drop a .wav file here</div>
+
+<div class="row">
+  <div class="col">
+    <h2 style="font-size:13px; color:#5e7a68; text-transform:uppercase; letter-spacing:1px;">Result</h2>
+    <table id="results">
+      <thead><tr><th>#</th><th>tune_id</th><th>%</th><th>name</th><th>type</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="col">
+    <h2 style="font-size:13px; color:#5e7a68; text-transform:uppercase; letter-spacing:1px;">Timing</h2>
+    <pre id="timing">—</pre>
+  </div>
+</div>
+
+<script>
+const STATUS = document.getElementById('status');
+const DROP   = document.getElementById('drop');
+const RESULTS = document.querySelector('#results tbody');
+const TIMING = document.getElementById('timing');
+
+function setStatus(msg, cls = '') { STATUS.className = cls; STATUS.textContent = msg; }
+
+const worker = new Worker('/dsp-worker-362.js');
+let workerReady = false;
+let pendingResolve = null;
+
+worker.onmessage = (e) => {
+  const msg = e.data || {};
+  if (msg.type === 'ready') {
+    workerReady = true;
+    setStatus('worker ready · drop a .wav to identify', 'ok');
+  } else if (msg.type === 'init-error') {
+    setStatus('worker init failed: ' + msg.error, 'err');
+    console.error(msg);
+  } else if (msg.type === 'result') {
+    if (pendingResolve) { pendingResolve(msg); pendingResolve = null; }
+  } else if (msg.type === 'process-error') {
+    if (pendingResolve) { pendingResolve(null); pendingResolve = null; }
+    console.error(msg);
+  }
+};
+
+// Capture SR doesn't really matter for this test — we feed already-decoded
+// audio at AudioContext's native SR (44100 or 48000 typically). WASM
+// resamples internally to 22050.
+const captureSr = 48000;
+
+(async function init() {
+  worker.postMessage({
+    type: 'init',
+    baseUrl: '',
+    assetsBase: '/362',
+    inputSr: captureSr,
+  });
+})();
+
+function process(samples) {
+  return new Promise(resolve => {
+    pendingResolve = resolve;
+    const buf = samples.buffer.slice(samples.byteOffset, samples.byteOffset + samples.byteLength);
+    worker.postMessage({ type: 'process', samples: buf, replaceBuffer: true }, [buf]);
+  });
+}
+
+async function decodeWav(file) {
+  const ab = await file.arrayBuffer();
+  const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: captureSr });
+  const buf = await ctx.decodeAudioData(ab);
+  // Mix to mono.
+  if (buf.numberOfChannels === 1) {
+    return new Float32Array(buf.getChannelData(0));
+  }
+  const len = buf.length;
+  const out = new Float32Array(len);
+  const ch = buf.numberOfChannels;
+  for (let c = 0; c < ch; c++) {
+    const src = buf.getChannelData(c);
+    for (let i = 0; i < len; i++) out[i] += src[i];
+  }
+  for (let i = 0; i < len; i++) out[i] /= ch;
+  return out;
+}
+
+async function identify(file) {
+  if (!workerReady) { setStatus('worker not ready yet', 'err'); return; }
+  setStatus(`decoding ${file.name} (${(file.size / 1024).toFixed(0)} KB)…`);
+  const samples = await decodeWav(file);
+  await identifyRaw(samples, file.name);
+}
+
+// ── Mic recording (ScriptProcessor: deprecated API, fine for dev test) ──
+const REC_BTN   = document.getElementById('recBtn');
+const REC_TIME  = document.getElementById('recTime');
+const REC_LEVEL = document.getElementById('recLevel');
+let recording = false;
+let micStream = null;
+let micCtx = null;
+let micSource = null;
+let micProcessor = null;
+let micChunks = [];
+let recStartMs = 0;
+let recTimer = null;
+let curRms = 0;
+
+async function startRec() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+  } catch (err) {
+    setStatus('mic permission denied: ' + (err.message || err), 'err');
+    return;
+  }
+  // Match AudioContext rate to captureSr so the path from mic → WASM is consistent.
+  micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: captureSr });
+  micSource = micCtx.createMediaStreamSource(micStream);
+  micProcessor = micCtx.createScriptProcessor(4096, 1, 1);
+  micChunks = [];
+  curRms = 0;
+  micProcessor.onaudioprocess = (e) => {
+    const ch = e.inputBuffer.getChannelData(0);
+    const copy = new Float32Array(ch);
+    micChunks.push(copy);
+    // RMS for level meter
+    let s = 0; for (let i = 0; i < ch.length; i++) s += ch[i] * ch[i];
+    curRms = Math.sqrt(s / ch.length);
+  };
+  micSource.connect(micProcessor);
+  micProcessor.connect(micCtx.destination);
+
+  recording = true;
+  recStartMs = performance.now();
+  REC_BTN.textContent = '■ stop';
+  REC_BTN.classList.add('rec-on');
+  setStatus('recording…', 'ok');
+
+  recTimer = setInterval(() => {
+    REC_TIME.textContent = ((performance.now() - recStartMs) / 1000).toFixed(1) + ' s';
+    REC_LEVEL.style.width = Math.min(100, curRms * 600).toFixed(0) + '%';
+  }, 50);
+}
+
+async function stopRec() {
+  if (!recording) return;
+  recording = false;
+  clearInterval(recTimer);
+  REC_LEVEL.style.width = '0%';
+  REC_BTN.textContent = '● record';
+  REC_BTN.classList.remove('rec-on');
+
+  try { micProcessor.disconnect(); } catch {}
+  try { micSource.disconnect(); } catch {}
+  try { micStream.getTracks().forEach(t => t.stop()); } catch {}
+  try { await micCtx.close(); } catch {}
+
+  let total = 0;
+  for (const c of micChunks) total += c.length;
+  if (total === 0) { setStatus('no audio captured', 'err'); return; }
+  const all = new Float32Array(total);
+  let off = 0;
+  for (const c of micChunks) { all.set(c, off); off += c.length; }
+  micChunks = [];
+
+  await identifyRaw(all, `recording (${(total / captureSr).toFixed(1)}s)`);
+}
+
+REC_BTN.addEventListener('click', () => {
+  if (recording) stopRec(); else startRec();
+});
+
+async function identifyRaw(samples, label) {
+  if (!workerReady) { setStatus('worker not ready yet', 'err'); return; }
+  setStatus(`processing ${samples.length} samples @ ${captureSr} Hz…`);
+  const t0 = performance.now();
+  const r = await process(samples);
+  const totalMs = performance.now() - t0;
+  if (!r) { setStatus('identification failed', 'err'); return; }
+
+  RESULTS.innerHTML = '';
+  for (let i = 0; i < r.topK.length; i++) {
+    const t = r.topK[i];
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      `<td class="tid">${i + 1}</td>` +
+      `<td class="tid">${t.tuneId}</td>` +
+      `<td class="score">${(t.score * 100).toFixed(1)}</td>` +
+      `<td>${t.name}</td>` +
+      `<td class="meta">${t.type}</td>`;
+    RESULTS.appendChild(tr);
+  }
+  TIMING.textContent =
+    `dsp:      ${r.dspMs.toFixed(0)} ms\n` +
+    `inf:      ${r.infMs.toFixed(0)} ms\n` +
+    `windows:  ${r.nWindows}\n` +
+    `buffer:   ${r.bufferSec.toFixed(2)} s\n` +
+    `e2e:      ${totalMs.toFixed(0)} ms`;
+  setStatus(`identified · ${label}`, 'ok');
+}
+
+DROP.addEventListener('dragover', (e) => { e.preventDefault(); DROP.classList.add('over'); });
+DROP.addEventListener('dragleave', () => DROP.classList.remove('over'));
+DROP.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  DROP.classList.remove('over');
+  const file = e.dataTransfer.files[0];
+  if (file) await identify(file);
+});
+DROP.addEventListener('click', () => {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'audio/wav,audio/*';
+  inp.onchange = async () => { if (inp.files[0]) await identify(inp.files[0]); };
+  inp.click();
+});
+</script>
+</body>
+</html>
