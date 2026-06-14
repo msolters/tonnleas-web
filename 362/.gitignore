@@ -1,0 +1,10 @@
+# Symlinks to mobile/assets/362/model_*.onnx (gitignored there too).
+# Recreate via:
+#   ln -sf ../../assets/362/model_nokeycanon_fp16.onnx model_nokeycanon_fp16.onnx
+#   ln -sf ../../assets/362/model_nokeycanon_int8_qdq.onnx model_nokeycanon_int8_qdq.onnx
+model_nokeycanon_fp16.onnx
+model_nokeycanon_int8_qdq.onnx
+
+# Symlink to mobile/assets/362/tunes_canonical.json (22MB; gitignored there too).
+# Recreate via:  ln -sf ../../assets/362/tunes_canonical.json tunes_canonical.json
+tunes_canonical.json

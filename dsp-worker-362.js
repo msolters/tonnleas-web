@@ -525,12 +525,25 @@ async function processBuffer() {
     // (bin 0 = G); pipeline.web.ts rotates G→C for the engine's C-based
     // profiles.
     const chromaSummary = new Float32Array(N_CHROMA);
+    // Dense PER-FRAME chroma sequence (bin-major: chromaSeq[c*totalFrames + frame])
+    // — the observation for the ensemble score-follower's chroma localizer. The
+    // model usually emits nWindows=1 of WINDOW_FRAMES frames, so the density lives
+    // in the frames, not the windows. Built in the SAME pass as the summary
+    // (reuses the data already in `tensors`, no extra STFT) and captured
+    // PRE-KeyCanon in G-based order; pipeline.web.ts rotates G→C.
+    const totalFrames = nWindows * WINDOW_FRAMES;
+    const chromaSeq = new Float32Array(N_CHROMA * totalFrames);
     for (let w = 0; w < nWindows; w++) {
         const wbase = w * TENSOR_SIZE;
         for (let c = 0; c < N_CHROMA; c++) {
             const cbase = wbase + c * WINDOW_FRAMES;
+            const dst = c * totalFrames + w * WINDOW_FRAMES;
             let s = 0;
-            for (let f = 0; f < WINDOW_FRAMES; f++) s += tensors[cbase + f];
+            for (let f = 0; f < WINDOW_FRAMES; f++) {
+                const v = tensors[cbase + f];
+                chromaSeq[dst + f] = v;
+                s += v;
+            }
             chromaSummary[c] += s;
         }
     }
@@ -568,7 +581,7 @@ async function processBuffer() {
     aggregatePerTuneMax(meanProbs, tuneProbs);
     const topK = topKFromTuneProbs(tuneProbs, TOP_K);
 
-    return { topK, tuneProbs, chromaSummary, dspMs, infMs, nWindows };
+    return { topK, tuneProbs, chromaSummary, chromaSeq, dspMs, infMs, nWindows };
 }
 
 /* ── Message dispatch ────────────────────────────────────────────────── */
@@ -598,15 +611,18 @@ self.onmessage = async (e) => {
             // the main thread receives fresh Float32Arrays of the same data.
             const tuneProbsBuf = result.tuneProbs ? result.tuneProbs.buffer : null;
             const chromaBuf    = result.chromaSummary ? result.chromaSummary.buffer : null;
+            const chromaSeqBuf = result.chromaSeq ? result.chromaSeq.buffer : null;
             const transfer = [];
             if (tuneProbsBuf) transfer.push(tuneProbsBuf);
             if (chromaBuf)    transfer.push(chromaBuf);
+            if (chromaSeqBuf) transfer.push(chromaSeqBuf);
             self.postMessage(
                 {
                     type: 'result',
                     topK: result.topK,
                     tuneProbs: tuneProbsBuf,
                     chromaSummary: chromaBuf,
+                    chromaSeq: chromaSeqBuf,
                     dspMs: result.dspMs,
                     infMs: result.infMs,
                     nWindows: result.nWindows,

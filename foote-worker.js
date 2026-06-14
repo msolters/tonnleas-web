@@ -2,6 +2,11 @@
  * Foote novelty worker — runs the self-similarity / checkerboard / peak-pick
  * math off the main thread so analysis-region scans don't block the UI or DSP.
  *
+ * NATIVE PARITY: src/search/foote-analyze.ts is a line-for-line port of analyze()
+ * below (React Native has no Worker, so it runs the same math inline). Any change
+ * to the algorithm here MUST be mirrored there (and vice-versa) — the two share no
+ * code because this file is a static asset that can't import bundled modules.
+ *
  * Protocol:
  *   IN  { type: 'analyze', scanId, frames: Float32Array (N*12), timestamps: Float64Array(N),
  *         segments: [{tuneId,startTime,endTime}], windowEndMs }
@@ -103,7 +108,44 @@ function regionChromaProfile(frames, N, start, end) {
   return profile;
 }
 
-function analyze(frames, timestamps, segments, windowEndMs) {
+// ── Amplitude-envelope seams ───────────────────────────────────────────────
+// Chroma novelty is BLIND to a same-key tune change (e.g. two Dorian reels):
+// the harmonic distribution barely shifts at the join, so no novelty peak and
+// the pre-side never looks "dissimilar". But a tune change in a set almost
+// always shows in the WAVEFORM — a brief articulation dip (breath/phrase gap)
+// at the seam. We smooth the per-frame energy and flag local minima that dip
+// well below the surrounding level as candidate boundaries. These supplement
+// the chroma peaks in the START-EXTEND search below.
+function findEnergySeams(energies, N) {
+  if (!energies || N < 7) return [];
+  // Smooth with a small moving average to suppress per-frame jitter.
+  const sm = new Float32Array(N);
+  const H = 2; // ±2 frames ≈ ±200 ms
+  for (let i = 0; i < N; i++) {
+    let s = 0, c = 0;
+    for (let j = Math.max(0, i - H); j <= Math.min(N - 1, i + H); j++) { s += energies[j]; c++; }
+    sm[i] = s / c;
+  }
+  const seams = [];
+  const LOCAL = 12;             // ±~1.2 s window for the local reference level
+  const DIP_FRAC = 0.6;         // seam must dip below 0.6× the local median
+  for (let i = H + 1; i < N - H - 1; i++) {
+    // Local minimum of the smoothed envelope.
+    if (sm[i] > sm[i - 1] || sm[i] > sm[i + 1]) continue;
+    // Local reference = median of the surrounding window.
+    const lo = Math.max(0, i - LOCAL), hi = Math.min(N, i + LOCAL + 1);
+    const win = Array.prototype.slice.call(sm.subarray(lo, hi)).sort((a, b) => a - b);
+    const med = win[win.length >> 1];
+    if (med > 0 && sm[i] < DIP_FRAC * med) {
+      // Depth-weighted strength in [0,1] — deeper dip = stronger seam.
+      const strength = Math.min(1, (med - sm[i]) / med);
+      seams.push({ idx: i, strength });
+    }
+  }
+  return seams;
+}
+
+function analyze(frames, timestamps, segments, windowEndMs, energies) {
   const N = timestamps.length;
   const result = { boundaries: [], suggestions: [], gapAbsorptions: [], trimSuggestions: [], extendSuggestions: [] };
   if (N < KERNEL_HALF * 2 + 2) return result;
@@ -112,6 +154,7 @@ function analyze(frames, timestamps, segments, windowEndMs) {
   const novelty = computeNovelty(S, N);
   const peakIndices = pickPeaks(novelty);
   result.boundaries = peakIndices.map(i => timestamps[i]);
+  const energySeams = findEnergySeams(energies, N);
 
   // ── Per-segment Foote-driven boundary refinement ───────────────────────────
   // For every segment overlapping the scan window:
@@ -197,16 +240,27 @@ function analyze(frames, timestamps, segments, windowEndMs) {
       });
     }
 
-    // Start extend: earliest peak in [seg.startTime - MAX_EXTEND_MS, seg.startTime)
-    // that LOOKS LIKE A REAL BOUNDARY — pre-peak side dissimilar to the
-    // segment AND post-peak side matches it.  This is the structural
-    // signature of "different content → this tune starts here" in the self-
-    // similarity matrix.  A mid-tune chord change has BOTH sides matching
-    // the profile (post passes but pre passes too) so it's skipped, leaving
-    // us free to look further back for the real onset.
+    // Start extend: earliest candidate boundary in
+    // [seg.startTime - MAX_EXTEND_MS, seg.startTime) that LOOKS LIKE A REAL
+    // ONSET — post-peak side matches this tune AND the pre-peak side belongs
+    // to something else. Candidates come from TWO sources:
+    //   1. chroma novelty peaks — fire when the pre-side is absolutely
+    //      dissimilar (preSim < SIM_DISSIM): a different-key tune / silence.
+    //   2. amplitude energy seams — fire when chroma is blind (a SAME-KEY tune
+    //      change has no novelty peak and the pre-side stays chroma-similar).
+    //      The waveform dip marks the join; we still require the new tune to
+    //      fit the post-side BETTER than the pre-side (relative margin), so a
+    //      mid-tune phrase gap (both sides match equally) is rejected.
+    const REL_MARGIN = 0.08;    // post must beat pre by this for an energy seam
     const extendFloor = Math.max(0, seg.startTime - MAX_EXTEND_MS);
+    // Merge both candidate sources, ordered by frame index (chronological).
+    const extendCands = [];
+    for (const p of peakIndices) extendCands.push({ idx: p, seam: 0 });
+    for (const s of energySeams) extendCands.push({ idx: s.idx, seam: s.strength });
+    extendCands.sort((a, b) => a.idx - b.idx);
     let bestExtendTs = -1, bestExtendConf = 0;
-    for (const p of peakIndices) {
+    for (const cand of extendCands) {
+      const p = cand.idx;
       const pTs = timestamps[p];
       if (pTs < extendFloor) continue;
       if (pTs >= seg.startTime) break;
@@ -217,14 +271,24 @@ function analyze(frames, timestamps, segments, windowEndMs) {
       const postProfile = maxPooledProfile(frames, N, p, postEnd);
       const preSim = cosineSimVec(preProfile, profile);
       const postSim = cosineSimVec(postProfile, profile);
-      if (postSim >= SIM_MATCH && preSim < SIM_DISSIM) {
-        const conf = Math.min(1,
+      if (postSim < SIM_MATCH) continue;
+      let conf = 0;
+      if (preSim < SIM_DISSIM) {
+        // Chroma boundary (original, strong) signal.
+        conf = Math.min(1,
           (postSim - SIM_MATCH) / (1 - SIM_MATCH) * 0.4
           + (SIM_DISSIM - preSim) / SIM_DISSIM * 0.4
           + 0.2,
         );
-        if (bestExtendTs < 0) { bestExtendTs = pTs; bestExtendConf = conf; }
+      } else if (cand.seam > 0 && (postSim - preSim) >= REL_MARGIN) {
+        // Same-key seam: chroma can't separate the tunes absolutely, but the
+        // waveform dip + relative chroma preference pin the join.
+        const relNorm = Math.min(1, (postSim - preSim) / 0.25);
+        conf = Math.min(1, 0.45 + 0.30 * relNorm + 0.25 * cand.seam);
+      } else {
+        continue;
       }
+      if (bestExtendTs < 0) { bestExtendTs = pTs; bestExtendConf = conf; }
     }
     if (bestExtendTs > 0 && seg.startTime - bestExtendTs >= MIN_EXTEND_MS) {
       result.extendSuggestions.push({
@@ -417,7 +481,7 @@ self.onmessage = function (e) {
   const m = e.data;
   if (!m || m.type !== 'analyze') return;
   try {
-    const r = analyze(m.frames, m.timestamps, m.segments || [], m.windowEndMs || 0);
+    const r = analyze(m.frames, m.timestamps, m.segments || [], m.windowEndMs || 0, m.energies || null);
     self.postMessage({ type: 'result', scanId: m.scanId, ...r });
   } catch (err) {
     self.postMessage({ type: 'error', scanId: m.scanId, error: String(err && err.message || err) });
