@@ -145,6 +145,46 @@ function findEnergySeams(energies, N) {
   return seams;
 }
 
+// Wide-window region-divergence boundary finder. KEEP IN SYNC with
+// src/search/foote-analyze.ts. Local novelty (KERNEL_HALF ≈ 0.8 s) is blind to
+// a tune change where a good chunk of each tune must be in view; this compares
+// MEAN chroma profiles of REGION_MS-wide spans on each side of every candidate
+// split and flags local minima below REGION_DIVERGE_SIM as boundaries.
+const REGION_FINDER_ON = true;     // additive boundary source; flip to disable
+const REGION_MS = 8000;            // profile span on each side of a candidate split
+const REGION_STEP_MS = 1000;       // slide step
+const REGION_DIVERGE_SIM = 0.80;   // cross-sim at a local min below this = a boundary
+const REGION_MIN_GAP_MS = 6000;    // min spacing between region boundaries
+function findRegionBoundaries(frames, N, timestamps) {
+  const out = [];
+  if (!REGION_FINDER_ON || N < 6) return out;
+  const span = timestamps[N - 1] - timestamps[0];
+  if (span <= 0) return out;
+  const msPerFrame = span / (N - 1);
+  const rf = Math.round(REGION_MS / msPerFrame);
+  const stepF = Math.max(1, Math.round(REGION_STEP_MS / msPerFrame));
+  if (rf < 4 || N < rf * 2 + 2) return out;
+  const idxs = [];
+  const sims = [];
+  for (let i = rf; i <= N - rf; i += stepF) {
+    const left = regionChromaProfile(frames, N, i - rf, i);
+    const right = regionChromaProfile(frames, N, i, i + rf);
+    idxs.push(i);
+    sims.push(cosineSimVec(left, right));
+  }
+  let lastTs = -Infinity;
+  for (let k = 1; k < sims.length - 1; k++) {
+    const s = sims[k];
+    if (s >= REGION_DIVERGE_SIM) continue;
+    if (s > sims[k - 1] || s > sims[k + 1]) continue;   // local minimum only
+    const ts = timestamps[idxs[k]];
+    if (ts - lastTs < REGION_MIN_GAP_MS) continue;       // space boundaries out
+    out.push({ idx: idxs[k], strength: Math.min(1, (REGION_DIVERGE_SIM - s) / REGION_DIVERGE_SIM) });
+    lastTs = ts;
+  }
+  return out;
+}
+
 function analyze(frames, timestamps, segments, windowEndMs, energies) {
   const N = timestamps.length;
   const result = { boundaries: [], suggestions: [], gapAbsorptions: [], trimSuggestions: [], extendSuggestions: [] };
@@ -155,6 +195,7 @@ function analyze(frames, timestamps, segments, windowEndMs, energies) {
   const peakIndices = pickPeaks(novelty);
   result.boundaries = peakIndices.map(i => timestamps[i]);
   const energySeams = findEnergySeams(energies, N);
+  const regionDivBounds = findRegionBoundaries(frames, N, timestamps);
 
   // ── Per-segment Foote-driven boundary refinement ───────────────────────────
   // For every segment overlapping the scan window:
@@ -257,6 +298,7 @@ function analyze(frames, timestamps, segments, windowEndMs, energies) {
     const extendCands = [];
     for (const p of peakIndices) extendCands.push({ idx: p, seam: 0 });
     for (const s of energySeams) extendCands.push({ idx: s.idx, seam: s.strength });
+    for (const r of regionDivBounds) extendCands.push({ idx: r.idx, seam: r.strength });
     extendCands.sort((a, b) => a.idx - b.idx);
     let bestExtendTs = -1, bestExtendConf = 0;
     for (const cand of extendCands) {
@@ -342,12 +384,86 @@ function analyze(frames, timestamps, segments, windowEndMs, energies) {
   const NEIGHBOR_RADIUS_SEGS = 4;        // search ±4 segment indices either side
   const NEIGHBOR_RADIUS_MS = 60_000;     // and ±60 s wall time
   const LENGTH_DOMINANCE_RATIO = 1.8;    // anchor must be ≥ 1.8× the weak segment
+  // A relabel only ever CORRECTS a brief mislabel flicker — never a SUSTAINED
+  // identification. Chroma self-similarity is blind to same-key tune changes
+  // (Cooley's vs Gravel Walks — both D reels — high cosine sim, NO boundary
+  // between), so without this cap both the bookend override and the length-
+  // dominance path would absorb a full neighbouring tune that merely shares a
+  // key. A real trad tune runs ≥ ~20 s; an ID flicker is a few seconds.
+  // KEEP IN SYNC with src/search/foote-analyze.ts.
+  const RELABEL_MAX_MIDDLE_MS = 14_000;
 
   for (let si = 0; si < segments.length; si++) {
     const seg = segments[si];
     const segDur = seg.endTime - seg.startTime;
     const myProfile = segProfiles[si];
     if (!myProfile) continue;
+    if (segDur > RELABEL_MAX_MIDDLE_MS) continue;  // sustained = a real tune; leave it
+
+    // ── BOOKEND override ─────────────────────────────────────────────────────
+    // The classic consolidation signature: the SAME tune reappears on BOTH
+    // sides of a short, low-confidence segment (Cooley's · Tam Lin · Cooley's).
+    // When the bracketed segment is acoustically self-similar to those identical
+    // bookends — and no real Foote boundary separates it from either flank — the
+    // whole span is almost certainly ONE tune. Relabel to the bookend tune,
+    // OVERRIDING the length-dominance heuristic below (which would otherwise pull
+    // a brief segment into a long unrelated neighbour like Farewell to Ireland).
+    // The decision rests on the chroma self-similarity, not segment duration.
+    // KEEP IN SYNC with src/search/foote-analyze.ts.
+    {
+      let beforeNi = -1, afterNi = -1;
+      let beforeGap = Infinity, afterGap = Infinity;
+      for (let ni = 0; ni < segments.length; ni++) {
+        if (ni === si) continue;
+        const nb = segments[ni];
+        if (nb.tuneId === seg.tuneId) continue;
+        if (nb.endTime <= seg.startTime) {
+          const g = seg.startTime - nb.endTime;
+          if (g < beforeGap) { beforeGap = g; beforeNi = ni; }
+        } else if (nb.startTime >= seg.endTime) {
+          const g = nb.startTime - seg.endTime;
+          if (g < afterGap) { afterGap = g; afterNi = ni; }
+        }
+      }
+      if (beforeNi >= 0 && afterNi >= 0
+          && segments[beforeNi].tuneId === segments[afterNi].tuneId
+          && beforeGap <= NEIGHBOR_RADIUS_MS && afterGap <= NEIGHBOR_RADIUS_MS) {
+        const pB = segProfiles[beforeNi];
+        const pA = segProfiles[afterNi];
+        if (pB && pA) {
+          const simB = cosineSimVec(myProfile, pB);
+          const simA = cosineSimVec(myProfile, pA);
+          if (Math.min(simB, simA) > SIMILARITY_MERGE_THRESH) {
+            const spanLo = Math.min(seg.startTime, segments[beforeNi].endTime);
+            const spanHi = Math.max(seg.endTime, segments[afterNi].startTime);
+            let hardBoundary = false;
+            for (const b of result.boundaries) {
+              if (b > spanLo + BOUNDARY_TOLERANCE_MS && b < spanHi - BOUNDARY_TOLERANCE_MS) {
+                hardBoundary = true; break;
+              }
+            }
+            if (!hardBoundary) {
+              // Floor 0.70 (> the consumer's 0.65 apply-gate): the bookend
+              // pattern is strong structural evidence on its own, so even a
+              // borderline-similar bracketed segment clears the gate.
+              const bookSim = Math.min(simB, simA);
+              const confidence = Math.min(1,
+                (bookSim - SIMILARITY_MERGE_THRESH) / (1 - SIMILARITY_MERGE_THRESH) * 0.3 + 0.7);
+              if (!result.suggestions.some(s => s.segmentIdx === si)) {
+                result.suggestions.push({
+                  segmentIdx: si,
+                  currentTuneId: seg.tuneId,
+                  suggestedTuneId: segments[beforeNi].tuneId,
+                  confidence,
+                  bookend: true,
+                });
+              }
+              continue;
+            }
+          }
+        }
+      }
+    }
 
     let bestNi = -1;
     let bestSim = SIMILARITY_MERGE_THRESH;  // must beat the merge threshold
@@ -416,10 +532,12 @@ function analyze(frames, timestamps, segments, windowEndMs, energies) {
     const gapStart = seg.endTime;
     const gapEnd = nextSeg ? nextSeg.startTime : windowEndMs;
     const gapDur = gapEnd - gapStart;
-    // Gaps up to 60 s are absorbable — the lock can take 20-30 s after a
-    // silence reset, and we want Foote to still merge that gap into the tune
-    // that picks up on either side.
-    if (gapDur < 2000 || gapDur > 60000) continue;
+    // Upper bound 8 s (was 60 s): a gap as long as a real tune must NOT be
+    // silently absorbed into a chroma-similar neighbour — chroma can't tell a
+    // same-key NEIGHBOURING tune from a continuation, so anything beyond a brief
+    // transition is more likely a tune the model never locked. KEEP IN SYNC
+    // with src/search/foote-analyze.ts.
+    if (gapDur < 2000 || gapDur > 8000) continue;
 
     let gsf = -1, gef = -1;
     for (let i = 0; i < N; i++) {
