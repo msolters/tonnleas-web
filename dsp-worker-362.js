@@ -552,6 +552,22 @@ async function processBuffer() {
         for (let c = 0; c < N_CHROMA; c++) chromaSummary[c] *= inv;
     }
 
+    // ── Melodic-motion PEAK (noise/drone rejection) ──
+    // Per-frame dominant-note concentration: max/sum × N_CHROMA over each fine
+    // frame, averaged. AC/HVAC/fan noise has a FLAT chroma (no dominant note →
+    // peak ~1) even though it's tonal enough to pass the flatness gate; real
+    // melody has ONE clear note per frame (peak high). Validated on real
+    // app-captured audio: AC ~1.8, pipes-over-AC ~4.6. Gates out the trash-tune
+    // hallucination downstream (useTuneIdentifier). Computed on the fine
+    // pre-KeyCanon chroma (chromaSeq), which lives only in the worker on web.
+    let _mpSum = 0, _mpN = 0;
+    for (let f = 0; f < totalFrames; f++) {
+        let s = 0, mx = 0;
+        for (let c = 0; c < N_CHROMA; c++) { const v = chromaSeq[c * totalFrames + f]; s += v; if (v > mx) mx = v; }
+        if (s > 1e-9) { _mpSum += (mx / s) * N_CHROMA; _mpN++; }
+    }
+    const melodicPeak = _mpN > 0 ? _mpSum / _mpN : 0;
+
     for (let w = 0; w < nWindows; w++) {
         applyKeycanonInPlace(
             tensors.subarray(w * TENSOR_SIZE, (w + 1) * TENSOR_SIZE),
@@ -581,7 +597,7 @@ async function processBuffer() {
     aggregatePerTuneMax(meanProbs, tuneProbs);
     const topK = topKFromTuneProbs(tuneProbs, TOP_K);
 
-    return { topK, tuneProbs, chromaSummary, chromaSeq, dspMs, infMs, nWindows };
+    return { topK, tuneProbs, chromaSummary, chromaSeq, dspMs, infMs, nWindows, melodicPeak };
 }
 
 /* ── Message dispatch ────────────────────────────────────────────────── */
@@ -626,6 +642,7 @@ self.onmessage = async (e) => {
                     dspMs: result.dspMs,
                     infMs: result.infMs,
                     nWindows: result.nWindows,
+                    melodicPeak: result.melodicPeak,
                     bufferSec: _ringLen / _inputSr,
                 },
                 transfer.length > 0 ? transfer : undefined,
