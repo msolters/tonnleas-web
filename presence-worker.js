@@ -25,6 +25,21 @@
  *     { type:'result',  id:number, presence:Float32Array (10) }
  */
 
+// ── Worker → log relay ────────────────────────────────────────────────────
+// Worker threads can't use the main-thread console-relay, so their logs never
+// reach /tmp/app-console.log. POST straight to the same relay endpoint (a
+// CORS-simple text POST — no preflight). Dev-only; silent no-op if it's offline.
+function wlog(m) {
+  try { console.log('[presence-worker]', m); } catch (_) {}
+  try {
+    fetch('http://localhost:8124/log', {
+      method: 'POST',
+      body: new Date().toISOString() + ' [log] [presence-worker] ' + m,
+      keepalive: true,
+    }).catch(function () {});
+  } catch (_) {}
+}
+
 // ── STFT params (must match the model's training) ──
 var SEP_N_FFT = 1024;
 var SEP_HOP = 256;
@@ -127,14 +142,25 @@ self.onmessage = async function(e) {
       ort.env.wasm.numThreads = 1;
       ort.env.wasm.wasmPaths = msg.baseUrl + '/';
       var modelUrl = msg.modelUrl || (msg.baseUrl + '/instrument_presence.onnx');
-      var resp = await fetch(modelUrl);
+      // no-store: never reuse a cached model. A stale/partial cached response from
+      // the 30MB->19.8MB v2-core swap loaded a corrupt buffer that made the session
+      // silently unusable (fresh=0). Proven: a fresh fetch of this exact model loads
+      // + runs fine in onnxruntime-web.
+      wlog('init: ort loaded, fetching ' + modelUrl);
+      var resp = await fetch(modelUrl, { cache: 'no-store' });
       var buf = await resp.arrayBuffer();
+      wlog('model fetched ' + buf.byteLength + ' bytes; creating session…');
+      // graphOptimizationLevel 'all' hangs onnxruntime-web 1.18.0 on the v2-core
+      // CNN presence graph (fuses Conv/BN into ops the WASM build can't finalize)
+      // — the load never resolves → fresh=0 → no suppression. 'basic' loads fine.
       session = await ort.InferenceSession.create(buf, {
         executionProviders: ['wasm'],
-        graphOptimizationLevel: 'all',
+        graphOptimizationLevel: 'basic',
       });
+      wlog('session created OK (inputs=' + (session.inputNames||[]) + ') — ready');
       self.postMessage({ type: 'model-loaded' });
     } catch (err) {
+      wlog('model LOAD failed: ' + ((err && err.message) || String(err)));
       self.postMessage({ type: 'model-error', error: (err && err.message) || String(err) });
     }
     return;
@@ -147,12 +173,18 @@ self.onmessage = async function(e) {
     try {
       var stft = stftMag(msg.samples);
       var inputTensor = new ort.Tensor('float32', stft.mag, [1, stft.nFrames, SEP_BINS]);
-      var outMap = await session.run({ mag: inputTensor });
+      // Bind by the session's ACTUAL input name — the 10-class head used "mag",
+      // the [1,11] noise head uses "magnitude". Dynamic keeps both working.
+      var inName = (session.inputNames && session.inputNames[0]) || 'magnitude';
+      var feeds = {}; feeds[inName] = inputTensor;
+      var outMap = await session.run(feeds);
       var out = outMap.presence || outMap[Object.keys(outMap)[0]];
       var presence = new Float32Array(out.data);
+      if (!self._loggedFirstRun) { self._loggedFirstRun = true; wlog('first inference OK, presence[' + presence.length + '] noise=' + presence[10]); }
       self.postMessage({ type: 'result', id: msg.id, presence: presence }, [presence.buffer]);
     } catch (err) {
-      self.postMessage({ type: 'result', id: msg.id, presence: null });
+      wlog('run failed: ' + ((err && err.message) || String(err)));
+      self.postMessage({ type: 'result', id: msg.id, presence: null, error: (err && err.message) || String(err) });
     }
   }
 };
