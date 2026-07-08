@@ -29,7 +29,16 @@
 // Worker threads can't use the main-thread console-relay, so their logs never
 // reach /tmp/app-console.log. POST straight to the same relay endpoint (a
 // CORS-simple text POST — no preflight). Dev-only; silent no-op if it's offline.
+// DEV only: the worker has no __DEV__, so gate on being served from the dev server
+// (localhost). In production (jigripper.com) wlog is a COMPLETE no-op — no console
+// spam (efficiency) and no localhost fetch (which trips Chrome's Local Network Access
+// prompt — correctness).
+var WORKER_DEV = (function () {
+  try { var h = (self.location && self.location.hostname) || ''; return h === 'localhost' || h === '127.0.0.1'; }
+  catch (_) { return false; }
+})();
 function wlog(m) {
+  if (!WORKER_DEV) return;
   try { console.log('[presence-worker]', m); } catch (_) {}
   try {
     fetch('http://localhost:8124/log', {
