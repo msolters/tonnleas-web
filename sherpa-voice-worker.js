@@ -9,6 +9,10 @@ var recognizer = null;
 var recognizerStream = null;
 var baseUrl = '';
 var pendingHotwords = '';
+// ?v= cache-bust tokens (from ASSET_VERSIONS via init) — Cloudflare edge-caches
+// .onnx/.wasm by extension, so both the model files and the wasm need a token.
+var _modelV = '';   // sherpa-models/*.onnx
+var _wasmV = '';    // sherpa-onnx-wasm-main-asr.wasm
 
 // ── Module configuration — must be set BEFORE importing the glue JS ──
 var Module = {
@@ -16,7 +20,7 @@ var Module = {
   noInitialRun: true,
 
   locateFile: function(path) {
-    return baseUrl + '/' + path;
+    return baseUrl + '/' + path + (path.slice(-5) === '.wasm' ? _wasmV : '');
   },
 
   setStatus: function(status) {
@@ -43,9 +47,9 @@ async function loadModelsAndInit() {
     }
 
     var models = [
-      { url: baseUrl + '/sherpa-models/encoder-epoch-99-avg-1.int8.onnx', name: 'encoder.onnx' },
-      { url: baseUrl + '/sherpa-models/decoder-epoch-99-avg-1.onnx', name: 'decoder.onnx' },
-      { url: baseUrl + '/sherpa-models/joiner-epoch-99-avg-1.int8.onnx', name: 'joiner.onnx' },
+      { url: baseUrl + '/sherpa-models/encoder-epoch-99-avg-1.int8.onnx' + _modelV, name: 'encoder.onnx' },
+      { url: baseUrl + '/sherpa-models/decoder-epoch-99-avg-1.onnx' + _modelV, name: 'decoder.onnx' },
+      { url: baseUrl + '/sherpa-models/joiner-epoch-99-avg-1.int8.onnx' + _modelV, name: 'joiner.onnx' },
       { url: baseUrl + '/sherpa-models/tokens.txt', name: 'tokens.txt' },
     ];
 
@@ -105,10 +109,12 @@ self.onmessage = function(e) {
   if (type === 'init') {
     baseUrl = e.data.baseUrl || '';
     pendingHotwords = e.data.hotwords || '';
+    _modelV = e.data.modelVersion ? ('?v=' + e.data.modelVersion) : '';
+    _wasmV = e.data.wasmVersion ? ('?v=' + e.data.wasmVersion) : '';
 
-    // Update Module.locateFile with the actual baseUrl
+    // Update Module.locateFile with the actual baseUrl (versioning the .wasm)
     Module.locateFile = function(path) {
-      return baseUrl + '/' + path;
+      return baseUrl + '/' + path + (path.slice(-5) === '.wasm' ? _wasmV : '');
     };
 
     self.postMessage({ type: 'loading', status: 'Loading WASM...' });

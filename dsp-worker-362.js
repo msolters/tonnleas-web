@@ -165,21 +165,37 @@ async function fetchJson(url) {
 let _dev = false;
 const _dlog = (...args) => { if (_dev) console.log(...args); };
 
-async function init({ baseUrl, assetsBase, inputSr, modelFile, dev }) {
+async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, wasmVersion, dev }) {
     _dev = !!dev;
     _baseUrl = baseUrl || '';
     _assetsBase = assetsBase || '';
     _inputSr = inputSr | 0;
     if (_inputSr <= 0) throw new Error(`bad inputSr ${inputSr}`);
 
+    // Cloudflare edge-caches by extension, so every .wasm / model URL below
+    // carries a `?v=` cache-bust token (bumped in ASSET_VERSIONS when the bytes
+    // change). Empty token → no query → identical to the un-versioned behaviour.
+    const wasmV = wasmVersion ? `?v=${wasmVersion}` : '';
+    const modelV = modelVersion ? `?v=${modelVersion}` : '';
+
     importScripts(`${_baseUrl}/hcqt_fold12.js`);
     importScripts(`${_baseUrl}/ort.min.js`);
 
     _wasm = await self.createHcqtFold12Module({
-        locateFile: (p) => `${_baseUrl}/${p}`,
+        locateFile: (p) => `${_baseUrl}/${p}${wasmV}`,
     });
 
-    self.ort.env.wasm.wasmPaths = `${_baseUrl}/`;
+    // ORT concatenates a string wasmPaths as a bare prefix (no room for a query),
+    // so version via the object form: map each shipped wasm file → its ?v= URL.
+    // ORT 1.18 looks up wasmPaths[filename] when it's an object (verified in the
+    // dist). Any file we don't map falls back to worker-dir-relative (unversioned
+    // but still resolvable) — so this can only ever add a version, never break a fetch.
+    self.ort.env.wasm.wasmPaths = wasmV
+        ? {
+            'ort-wasm-simd-threaded.wasm': `${_baseUrl}/ort-wasm-simd-threaded.wasm${wasmV}`,
+            'ort-wasm-simd.wasm': `${_baseUrl}/ort-wasm-simd.wasm${wasmV}`,
+          }
+        : `${_baseUrl}/`;
     // Multi-threaded WASM needs SharedArrayBuffer, which only exists when
     // the page is cross-origin isolated (COOP/COEP). The coi-serviceworker
     // shim provides that on GitHub Pages. When it's active we use up to 4
@@ -226,10 +242,10 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile, dev }) {
         const partCount = SHARDED_LOCAL[name];
         if (partCount) {
             const shardUrls = [];
-            for (let i = 0; i < partCount; i++) shardUrls.push(`${_assetsBase}/${name}.part${i}`);
+            for (let i = 0; i < partCount; i++) shardUrls.push(`${_assetsBase}/${name}.part${i}${modelV}`);
             candidates.push({ kind: 'shards', urls: shardUrls, label: `local sharded ${name} (×${partCount})` });
         }
-        candidates.push({ kind: 'single', url: `${_assetsBase}/${name}`, sameOrigin: true, label: `local ${name}` });
+        candidates.push({ kind: 'single', url: `${_assetsBase}/${name}${modelV}`, sameOrigin: true, label: `local ${name}` });
         if (RELEASE_FALLBACKS[name]) {
             candidates.push({ kind: 'single', url: RELEASE_FALLBACKS[name], sameOrigin: false, label: `release ${name}` });
         }

@@ -174,8 +174,16 @@ self.onmessage = async function(e) {
       importScripts(msg.baseUrl + '/ort.min.js');
       ort = self.ort;
       ort.env.wasm.numThreads = 1;
-      ort.env.wasm.wasmPaths = msg.baseUrl + '/';
-      var modelUrl = msg.modelUrl || (msg.baseUrl + '/melody_extractor.onnx');
+      // ?v= cache-bust tokens (from ASSET_VERSIONS via init). Empty → un-versioned.
+      var wasmV = msg.wasmVersion ? ('?v=' + msg.wasmVersion) : '';
+      var modelV = msg.modelVersion ? ('?v=' + msg.modelVersion) : '';
+      ort.env.wasm.wasmPaths = wasmV
+        ? {
+            'ort-wasm-simd-threaded.wasm': msg.baseUrl + '/ort-wasm-simd-threaded.wasm' + wasmV,
+            'ort-wasm-simd.wasm': msg.baseUrl + '/ort-wasm-simd.wasm' + wasmV,
+          }
+        : (msg.baseUrl + '/');
+      var modelUrl = msg.modelUrl || (msg.baseUrl + '/melody_extractor.onnx' + modelV);
       var resp = await fetch(modelUrl);
       var buf = await resp.arrayBuffer();
       session = await ort.InferenceSession.create(buf, {

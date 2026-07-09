@@ -149,14 +149,26 @@ self.onmessage = async function(e) {
       importScripts(msg.baseUrl + '/ort.min.js');
       ort = self.ort;
       ort.env.wasm.numThreads = 1;
-      ort.env.wasm.wasmPaths = msg.baseUrl + '/';
-      var modelUrl = msg.modelUrl || (msg.baseUrl + '/instrument_presence.onnx');
-      // no-store: never reuse a cached model. A stale/partial cached response from
-      // the 30MB->19.8MB v2-core swap loaded a corrupt buffer that made the session
-      // silently unusable (fresh=0). Proven: a fresh fetch of this exact model loads
-      // + runs fine in onnxruntime-web.
+      // Cache-bust tokens come from the bundle (ASSET_VERSIONS) via init. Empty →
+      // no query → identical to the un-versioned behaviour.
+      var wasmV = msg.wasmVersion ? ('?v=' + msg.wasmVersion) : '';
+      var modelV = msg.modelVersion ? ('?v=' + msg.modelVersion) : '';
+      // ORT string wasmPaths is a bare prefix (no room for ?v=), so version via the
+      // object form (ORT 1.18 indexes wasmPaths[filename] when it's an object).
+      ort.env.wasm.wasmPaths = wasmV
+        ? {
+            'ort-wasm-simd-threaded.wasm': msg.baseUrl + '/ort-wasm-simd-threaded.wasm' + wasmV,
+            'ort-wasm-simd.wasm': msg.baseUrl + '/ort-wasm-simd.wasm' + wasmV,
+          }
+        : (msg.baseUrl + '/');
+      // Do NOT use cache:'no-store' — that re-downloads the whole 38MB model on EVERY
+      // load (crippling on a public host). Normal caching + the versioned URL gives an
+      // instant repeat-load and still guarantees a fresh fetch after a model swap
+      // (the earlier stale/partial-cache corruption was a same-URL swap; ?v= fixes
+      // that without re-downloading every time).
+      var modelUrl = msg.modelUrl || (msg.baseUrl + '/instrument_presence.onnx' + modelV);
       wlog('init: ort loaded, fetching ' + modelUrl);
-      var resp = await fetch(modelUrl, { cache: 'no-store' });
+      var resp = await fetch(modelUrl);
       var buf = await resp.arrayBuffer();
       wlog('model fetched ' + buf.byteLength + ' bytes; creating session…');
       // graphOptimizationLevel 'all' hangs onnxruntime-web 1.18.0 on the v2-core

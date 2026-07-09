@@ -88,7 +88,16 @@ self.onmessage = async (e) => {
       _dev = !!msg.dev;
       const ortBase = msg.ortBase;   // origin where ort.min.js + ort-wasm-simd.wasm live (= baseUrl + '/')
       importScripts(ortBase + 'ort.min.js');
-      self.ort.env.wasm.wasmPaths = ortBase;
+      // Version the ORT wasm for the CDN/browser cache. String wasmPaths is a bare
+      // prefix (no room for ?v=), so use the object form (ORT 1.18 indexes it by
+      // filename). Empty token → keep the plain prefix (un-versioned, as before).
+      const _wv = msg.wasmVersion ? ('?v=' + msg.wasmVersion) : '';
+      self.ort.env.wasm.wasmPaths = _wv
+        ? {
+            'ort-wasm-simd-threaded.wasm': ortBase + 'ort-wasm-simd-threaded.wasm' + _wv,
+            'ort-wasm-simd.wasm': ortBase + 'ort-wasm-simd.wasm' + _wv,
+          }
+        : ortBase;
       self.ort.env.wasm.numThreads = 1;   // single-thread (no SharedArrayBuffer on iOS Safari)
       self.ort.env.wasm.simd = true;
       const t0 = Date.now();
