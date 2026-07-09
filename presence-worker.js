@@ -169,7 +169,29 @@ self.onmessage = async function(e) {
       var modelUrl = msg.modelUrl || (msg.baseUrl + '/instrument_presence.onnx' + modelV);
       wlog('init: ort loaded, fetching ' + modelUrl);
       var resp = await fetch(modelUrl);
-      var buf = await resp.arrayBuffer();
+      // Stream the body so the splash's unified progress bar can show this
+      // 38MB download advancing (a plain arrayBuffer() gives no signal). Post
+      // {loaded,total} the same way dsp-worker-362 does. Falls back to
+      // arrayBuffer() if the body isn't a readable stream.
+      var buf;
+      var total = +(resp.headers.get('content-length') || 0);
+      if (resp.body && resp.body.getReader) {
+        var reader = resp.body.getReader();
+        var chunks = [], loaded = 0;
+        for (;;) {
+          var rd = await reader.read();
+          if (rd.done) break;
+          chunks.push(rd.value);
+          loaded += rd.value.length;
+          self.postMessage({ type: 'model-progress', loaded: loaded, total: total });
+        }
+        var merged = new Uint8Array(loaded), moff = 0;
+        for (var mi = 0; mi < chunks.length; mi++) { merged.set(chunks[mi], moff); moff += chunks[mi].length; }
+        buf = merged.buffer;
+      } else {
+        buf = await resp.arrayBuffer();
+        self.postMessage({ type: 'model-progress', loaded: buf.byteLength, total: buf.byteLength || total });
+      }
       wlog('model fetched ' + buf.byteLength + ' bytes; creating session…');
       // graphOptimizationLevel 'all' hangs onnxruntime-web 1.18.0 on the v2-core
       // CNN presence graph (fuses Conv/BN into ops the WASM build can't finalize)
