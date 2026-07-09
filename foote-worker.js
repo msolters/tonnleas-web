@@ -384,6 +384,10 @@ function analyze(frames, timestamps, segments, windowEndMs, energies) {
   const NEIGHBOR_RADIUS_SEGS = 4;        // search ±4 segment indices either side
   const NEIGHBOR_RADIUS_MS = 60_000;     // and ±60 s wall time
   const LENGTH_DOMINANCE_RATIO = 1.8;    // anchor must be ≥ 1.8× the weak segment
+  // Strong flicker-swallow ratio: a same-key relabel this dominant is the model's
+  // own sustained verdict correcting a brief flicker (e.g. wrong-guess → Morrison's),
+  // so it may cross the consumer's same-key veto. KEEP IN SYNC with foote-analyze.ts.
+  const SAMEKEY_OVERRIDE_RATIO = 2.5;
   // A relabel only ever CORRECTS a brief mislabel flicker — never a SUSTAINED
   // identification. Chroma self-similarity is blind to same-key tune changes
   // (Cooley's vs Gravel Walks — both D reels — high cosine sim, NO boundary
@@ -519,6 +523,7 @@ function analyze(frames, timestamps, segments, windowEndMs, energies) {
         currentTuneId: seg.tuneId,
         suggestedTuneId: segments[bestNi].tuneId,
         confidence,
+        strongDominance: bestDur >= segDur * SAMEKEY_OVERRIDE_RATIO,
       });
     }
   }
