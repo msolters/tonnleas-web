@@ -53,7 +53,9 @@ const N_CHROMA = 12;
 const WINDOW_FRAMES = 344;
 const TENSOR_SIZE = N_CHROMA * WINDOW_FRAMES;  // 4128 floats / window
 const MAX_WINDOWS = 64;                // 8 s / 0.5 s/window stride at 50% overlap
-const TOP_K = 5;
+const TOP_K = 25;   // deep top-K: the analyze-recording aggregator ranks candidates across
+                    // hundreds of windows and needs depth (rank 6-25 carries real signal on hard
+                    // tracks — Galway finding); live path reads only topK[0], cost is negligible.
 const TWO_PI = 2 * Math.PI;
 
 let _baseUrl = '';
@@ -149,6 +151,32 @@ function applyKeycanonInPlace(C, T) {
         for (let t = 0; t < T; t++) tmp[dst + t] = C[src + t];
     }
     C.set(tmp);
+}
+
+/* ── Stationary-drone floor subtraction ─────────────────────────────────
+ * Per window and per chroma bin, subtract STRENGTH × (the bin's MINIMUM across
+ * the window's frames) — the level a continuous pitched drone (e.g. AC hum in one
+ * bin) never drops below — clamped at 0. Moving melody falls to ~0 between notes
+ * so its min ≈ 0 and it's preserved; a held-for-the-whole-window tone is removed.
+ * Gated by the process message's `droneSubtract` flag (Settings toggle, default ON).
+ * MUST stay identical to src/dsp/drone-subtract.ts → subtractDroneFloor. */
+const DRONE_FLOOR_STRENGTH = 1.0;
+function subtractDroneFloor(tensors, nWindows) {
+    for (let w = 0; w < nWindows; w++) {
+        const wbase = w * TENSOR_SIZE;
+        for (let c = 0; c < N_CHROMA; c++) {
+            const cbase = wbase + c * WINDOW_FRAMES;
+            let mn = Infinity;
+            for (let f = 0; f < WINDOW_FRAMES; f++) { const v = tensors[cbase + f]; if (v < mn) mn = v; }
+            if (!(mn > 0)) continue;
+            const floor = mn * DRONE_FLOOR_STRENGTH;
+            for (let f = 0; f < WINDOW_FRAMES; f++) {
+                const i = cbase + f;
+                const d = tensors[i] - floor;
+                tensors[i] = d > 0 ? d : 0;
+            }
+        }
+    }
 }
 
 /* ── Initialization ─────────────────────────────────────────────────── */
@@ -513,7 +541,7 @@ function topKFromTuneProbs(tuneProbs, topK) {
     return out;
 }
 
-async function processBuffer() {
+async function processBuffer(droneSubtract) {
     if (_ringLen <= 0) return null;
 
     // Copy ring contents into the WASM native buffer.
@@ -533,6 +561,12 @@ async function processBuffer() {
     const tensors = new Float32Array(
         _wasm.HEAPF32.buffer, _tensorsPtr, nWindows * TENSOR_SIZE
     ).slice();
+
+    // Stationary-drone floor subtraction (Settings toggle, default OFF) — remove a
+    // constant pitched tone (AC hum in one bin) from the fold12 tensors before the
+    // summary / display seq / KeyCanon / inference, so it cleans both the classifier
+    // input and the dot-matrix display chroma. Mirrors pipeline-362.native.ts §1b.
+    if (droneSubtract) subtractDroneFloor(tensors, nWindows);
 
     // PRE-KeyCanon summary chroma (12-bin, averaged over all windows × all
     // frames). Used by the engine's audio-key estimator — KeyCanon rotates
@@ -636,7 +670,7 @@ self.onmessage = async (e) => {
             const samples = new Float32Array(msg.samples);
             if (msg.replaceBuffer) _ringLen = 0;
             appendSamples(samples);
-            const result = await processBuffer();
+            const result = await processBuffer(!!msg.droneSubtract);
             if (!result) { self.postMessage({ type: 'result', topK: [], dspMs: 0, infMs: 0, nWindows: 0, bufferSec: 0 }); return; }
             // Transfer the dense per-tune-probs + chroma summary ArrayBuffers
             // to avoid copies on the wire — the worker drops its references,

@@ -34,6 +34,25 @@ function cosineSim12(frames, i, j) {
   return denom > 1e-9 ? dot / denom : 0;
 }
 
+// Melody-emphasized frame cosine for STRUCTURAL matching. Squares each bin so the
+// dominant (melodic) pitch dominates the comparison and quieter ACCOMPANIMENT bins
+// contribute less — an in-worker approximation of melody isolation (the clean
+// HCQT-consensus melody chroma is native-only, absent on web). Blunts the
+// accompaniment-change confound: a reharmonization mid-tune shifts the quiet bins,
+// which now barely move the structural affinity.
+function cosineSim12Mel(frames, i, j) {
+  let dot = 0, magA = 0, magB = 0;
+  const a0 = i * 12, b0 = j * 12;
+  for (let k = 0; k < 12; k++) {
+    const a = frames[a0 + k] * frames[a0 + k], b = frames[b0 + k] * frames[b0 + k];
+    dot += a * b;
+    magA += a * a;
+    magB += b * b;
+  }
+  const denom = Math.sqrt(magA) * Math.sqrt(magB);
+  return denom > 1e-9 ? dot / denom : 0;
+}
+
 function cosineSimVec(a, b) {
   let dot = 0, magA = 0, magB = 0;
   for (let i = 0; i < a.length; i++) {
@@ -187,7 +206,7 @@ function findRegionBoundaries(frames, N, timestamps) {
 
 function analyze(frames, timestamps, segments, windowEndMs, energies) {
   const N = timestamps.length;
-  const result = { boundaries: [], suggestions: [], gapAbsorptions: [], trimSuggestions: [], extendSuggestions: [] };
+  const result = { boundaries: [], suggestions: [], gapAbsorptions: [], trimSuggestions: [], extendSuggestions: [], boundaryMoves: [], xgDiag: [], xgBuild: 'struct-v5-mel' };
   if (N < KERNEL_HALF * 2 + 2) return result;
 
   const S = buildSimilarityMatrix(frames, N);
@@ -339,6 +358,168 @@ function analyze(frames, timestamps, segments, windowEndMs, energies) {
         newStartMs: bestExtendTs,
         confidence: bestExtendConf,
       });
+    }
+  }
+
+  // ── Same-key boundary CROSSOVER refinement ──────────────────────────────────
+  // The trim/extend passes above are gated on ABSOLUTE chroma dissimilarity, so
+  // they can't move a boundary between two tunes that share a key: the profiles
+  // stay similar and preSim/postSim never fall below SIM_DISSIM. But we KNOW the
+  // adjacent segments are DIFFERENT tunes — we don't need to prove a boundary
+  // exists, only find WHERE it is. Compare each side's MEAN-pooled chroma template
+  // (mean-pool keeps the note-EMPHASIS that differs between two same-key tunes;
+  // the max-pool used above flattens it) and place the boundary at the RELATIVE
+  // crossover — where a sliding window flips from matching A to matching B — then
+  // emit a trim(A)+extend(B) pair (the same machinery the absolute passes use).
+  // This snaps the boundary back from the ~8 s-late lock toward the real onset.
+  // Conservative: needs a clear, SUSTAINED A→B flip, else it leaves the boundary
+  // alone (do-no-harm). KEEP IN SYNC with src/search/foote-analyze.ts.
+  {
+    const XG_GUARD_MS = 8000;     // exclude A's late tail (really B) from A's template
+    const XG_TMPL_MS = 8000;      // template span per side
+    const XG_WIN_MS = 2000;       // sliding local-match window
+    const XG_STEP_MS = 500;
+    const XG_MARGIN = 0.015;      // min |simB − simA| to call a window A- or B-leaning
+    const XG_SUSTAIN_MS = 2000;   // the B-run before the boundary must last this long
+    const XG_MIN_MOVE_MS = 2000;  // only move the boundary if the crossover is ≥ this earlier
+    // Cap the reach at ~the real lock latency (window-fill ≈ 8 s + dwell). A
+    // legit late-lock correction is within this; anything larger is the crossover
+    // over-extending across an intervening tune when the previous segment is a
+    // long mis-lock (the Malbay/White-Petticoat swallow). Bounded damage.
+    const XG_MAX_MOVE_MS = 18000;
+    // A is a trustworthy template only if it's SELF-CONSISTENT — its first half
+    // and second half agree. On PEAKY chroma a real tune's own parts diverge more
+    // (live: Malbay halves 0.497), so 0.82 wrongly skipped legit corrections. 0.40
+    // still catches a mis-lock spanning two DIFFERENT tunes (which diverges further).
+    const XG_A_CONSISTENCY = 0.40;
+    // Sustained A-preference needed to STOP the walk. One ambiguous window (the 2s
+    // window straddling the turnover, or a part-variation blip inside A) must not
+    // halt short of the real turnover — require this many consecutive A-leaning
+    // windows (× STEP = 1.5 s) before deciding we're solidly back in A's body.
+    const XG_A_STOP_RUN = 3;
+    // ── STRUCTURAL crossover (Step 2) ── When the two templates share the whole
+    // pitch-class set (relative modes, e.g. E Aeolian ↔ G Ionian: tmplSim ≈ 0.96),
+    // content is blind. Switch to MELODIC-RECURRENCE matching: for each window frame,
+    // its best cosine match into A's vs B's recent region. A window whose phrases
+    // recur in B leans B even with an identical histogram. Frame-level → captures the
+    // note SEQUENCE the mean-pool throws away.
+    const XG_STRUCT_TRIGGER = 0.85;   // tmplSim ≥ this ⇒ content can't separate ⇒ go structural
+    const XG_STRUCT_STRIDE = 3;       // frame subsample (cost control)
+    const XG_STRUCT_MARGIN = 0.012;   // calibrated from live dRange: B-lean maxes ~0.018-0.032 (A-region shared pitches inflate affinityA), noise floor ~0.007
+    const XG_STRUCT_REGION_MS = 10000;// how much of each side's recent audio to match against
+    const idxAtOrAfter = (ms) => { let lo = 0, hi = N; while (lo < hi) { const mid = (lo + hi) >>> 1; if (timestamps[mid] < ms) lo = mid + 1; else hi = mid; } return lo; };  // timestamps ascending → binary search (was O(N) linear)
+    const meanTs = (aMs, bMs) => {
+      const s = idxAtOrAfter(aMs), e = idxAtOrAfter(bMs);
+      return (e - s >= 3) ? regionChromaProfile(frames, N, s, e) : null;
+    };
+    for (let si = 1; si < segments.length; si++) {
+      const A = segments[si - 1], B = segments[si];
+      if (A.tuneId === B.tuneId) continue;                 // only real tune changes
+      const bound = B.startTime;
+      // Skip mis-locks: if A's own first half vs second half diverge, A spans more
+      // than one tune (the 8137 case that swallowed Malbay + White Petticoat) — its
+      // template is untrustworthy and B would "win" across the buried tunes. A legit
+      // single tune stays self-similar throughout, even played several times, so a
+      // genuinely LONG tune is NOT skipped (that was the over-blunt duration guard).
+      const aMid = (A.startTime + A.endTime) / 2;
+      const aH1 = meanTs(A.startTime, aMid);
+      const aH2 = meanTs(aMid, A.endTime);
+      const aHalves = (aH1 && aH2) ? cosineSimVec(aH1, aH2) : 1;
+      if (aHalves < XG_A_CONSISTENCY) {
+        result.xgDiag.push(`${A.tuneId}->${B.tuneId} SKIP consistency halves=${aHalves.toFixed(3)}`);
+        continue;
+      }
+      const tmplAend = bound - XG_GUARD_MS;
+      if (tmplAend - A.startTime < 3000) continue;         // A too short to template cleanly
+      const tmplA = meanTs(A.startTime, Math.min(tmplAend, A.startTime + XG_TMPL_MS));
+      const tmplB = meanTs(bound, Math.min(B.endTime, bound + XG_TMPL_MS));
+      if (!tmplA || !tmplB) continue;
+      const tmplSim = cosineSimVec(tmplA, tmplB);
+      if (tmplSim > 0.995) continue;    // templates identical → nothing to split on
+      const floor = Math.max(A.startTime + XG_WIN_MS, bound - XG_MAX_MOVE_MS);
+      let cross = -1, foundA = false, aRun = 0;
+      if (tmplSim >= XG_STRUCT_TRIGGER) {
+        // ── STRUCTURAL path: relative modes / shared pitch content ──────────────
+        // Content is blind (same histogram). Walk back comparing each window's MELODIC
+        // RECURRENCE into A's recent region vs B's — the note SEQUENCE, not the pool.
+        const aRs = idxAtOrAfter(Math.max(A.startTime, bound - XG_GUARD_MS - XG_STRUCT_REGION_MS));
+        const aRe = idxAtOrAfter(bound - XG_GUARD_MS);
+        const bRs = idxAtOrAfter(bound);
+        const bRe = idxAtOrAfter(Math.min(B.endTime, bound + XG_STRUCT_REGION_MS));
+        let minDiff = 0, maxDiff = 0;
+        if (aRe - aRs >= 4 && bRe - bRs >= 4) {
+          // Precompute each frame's BEST cosine into the (FIXED) A- and B-regions ONCE.
+          // The window slides at 75% overlap, so per-window structAffinity recomputed
+          // this ~4×; now each window is just a mean of precomputed values. Filled on a
+          // stride grid anchored at spanS; the window mean reads the same grid.
+          const spanS = idxAtOrAfter(floor), spanE = idxAtOrAfter(bound);
+          const bestA = new Float32Array(spanE), bestB = new Float32Array(spanE);
+          for (let i = spanS; i < spanE; i += XG_STRUCT_STRIDE) {
+            let bA = 0, bB = 0;
+            for (let j = aRs; j < aRe; j += XG_STRUCT_STRIDE) { const s = cosineSim12Mel(frames, i, j); if (s > bA) bA = s; }
+            for (let j = bRs; j < bRe; j += XG_STRUCT_STRIDE) { const s = cosineSim12Mel(frames, i, j); if (s > bB) bB = s; }
+            bestA[i] = bA; bestB[i] = bB;
+          }
+          const meanBest = (best, wS, wE) => {
+            let sum = 0, cnt = 0;
+            for (let i = spanS + Math.ceil((wS - spanS) / XG_STRUCT_STRIDE) * XG_STRUCT_STRIDE; i < wE; i += XG_STRUCT_STRIDE) { sum += best[i]; cnt++; }
+            return cnt > 0 ? sum / cnt : 0;
+          };
+          for (let w = bound - XG_WIN_MS; w >= floor; w -= XG_STEP_MS) {
+            const wS = idxAtOrAfter(w), wE = idxAtOrAfter(w + XG_WIN_MS);
+            if (wE - wS < 3) break;
+            const diff = meanBest(bestB, wS, wE) - meanBest(bestA, wS, wE);
+            if (diff < minDiff) minDiff = diff; if (diff > maxDiff) maxDiff = diff;
+            if (diff < -XG_STRUCT_MARGIN) {
+              if (++aRun >= XG_A_STOP_RUN) { foundA = true; break; }
+            } else {
+              aRun = 0;
+              if (diff > XG_STRUCT_MARGIN) cross = w;
+            }
+          }
+        }
+        result.xgDiag.push(`${A.tuneId}->${B.tuneId} STRUCT tmplSim=${tmplSim.toFixed(3)} dRange=[${minDiff.toFixed(3)},${maxDiff.toFixed(3)}] cross=${cross<0?'none':((bound-cross)/1000).toFixed(1)+'s'} foundA=${foundA?1:0}`);
+      } else {
+        // ── CONTENT path: the "C-row" discriminative reweighting ────────────────
+        // Weight each pitch class by how much the two templates DISAGREE there, so the
+        // walk is decided by the rows that DISTINGUISH the tunes (e.g. C♯ vs C♮).
+        let magA = 0, magB = 0;
+        for (let k = 0; k < 12; k++) { magA += tmplA[k]*tmplA[k]; magB += tmplB[k]*tmplB[k]; }
+        magA = Math.sqrt(magA) || 1; magB = Math.sqrt(magB) || 1;
+        const dw = new Float32Array(12), wtA = new Float32Array(12), wtB = new Float32Array(12);
+        let sumW = 0;
+        for (let k = 0; k < 12; k++) {
+          dw[k] = Math.abs(tmplB[k]/magB - tmplA[k]/magA);
+          sumW += dw[k];
+          wtA[k] = tmplA[k]*dw[k]; wtB[k] = tmplB[k]*dw[k];
+        }
+        const wwin = new Float32Array(12);
+        for (let w = bound - XG_WIN_MS; w >= floor; w -= XG_STEP_MS) {
+          const win = meanTs(w, w + XG_WIN_MS);
+          if (!win) break;
+          for (let k = 0; k < 12; k++) wwin[k] = win[k]*dw[k];
+          const diff = cosineSimVec(wwin, wtB) - cosineSimVec(wwin, wtA);
+          if (diff < -XG_MARGIN) {
+            if (++aRun >= XG_A_STOP_RUN) { foundA = true; break; }
+          } else {
+            aRun = 0;
+            if (diff > XG_MARGIN) cross = w;
+          }
+        }
+        result.xgDiag.push(`${A.tuneId}->${B.tuneId} tmplSim=${tmplSim.toFixed(3)} sumW=${sumW.toFixed(2)} cross=${cross<0?'none':((bound-cross)/1000).toFixed(1)+'s'} foundA=${foundA?1:0}`);
+      }
+      if (cross < 0) continue;
+      // Require foundA (walked back INTO A) on BOTH paths. Without it, a two-part tune
+      // whose ENDING doesn't match its FIRST-8s template makes the walk confidently
+      // prefer B all the way to the cap (foundA=0) — and the next tune eats the tail
+      // (live: Galtee's end over-eaten via 724->35 cross=18s foundA=0). The now-working
+      // very-late boundaries all resolve via foundA=1 + the boundary window (Step 3),
+      // so this closes the over-reach without losing them.
+      if (!foundA) continue;
+      if (bound - cross < XG_SUSTAIN_MS || bound - cross < XG_MIN_MOVE_MS) continue;
+      // Directly move the A→B boundary to `cross` (steal A's tail + nulls in
+      // [cross, bound) → B). The scanner looks up B's metadata from tuneId.
+      result.boundaryMoves.push({ tuneId: B.tuneId, prevTuneId: A.tuneId, boundaryMs: cross, upperMs: bound, confidence: 0.7 });
     }
   }
 
