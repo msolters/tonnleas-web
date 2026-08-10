@@ -263,6 +263,7 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, was
     // concatenated in order to reconstruct the original bytes.
     const SHARDED_LOCAL = {
         'model_nokeycanon_fp16.onnx': 2,
+        'model_nokeycanon_tanh_fp16.onnx': 2,
     };
     const requestedFilename = modelFile || 'model_nokeycanon_fp16.onnx';
     const candidates = [];
