@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  https://www.jigripper.com/sitemap.xml
+
+  Hand-maintained. Google ignores <changefreq> and <priority> and only trusts
+  <lastmod> if it is consistently accurate, so update lastmod whenever the
+  corresponding page's content actually changes — otherwise drop it.
+
+  Only the www host is listed: the apex 301s to www (Cloudflare), and every
+  page's <link rel="canonical"> points at the www URL.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://www.jigripper.com/</loc>
+    <lastmod>2026-09-04</lastmod>
+  </url>
+  <url>
+    <loc>https://www.jigripper.com/what-tune-is-this.html</loc>
+    <lastmod>2026-09-04</lastmod>
+  </url>
+  <url>
+    <loc>https://www.jigripper.com/support.html</loc>
+    <lastmod>2026-08-10</lastmod>
+  </url>
+  <url>
+    <loc>https://www.jigripper.com/privacy</loc>
+    <lastmod>2026-08-15</lastmod>
+  </url>
+</urlset>

@@ -1,0 +1,33 @@
+# https://www.jigripper.com/robots.txt
+#
+# ⚠️ Cloudflare currently serves this URL itself: the live file today is 100%
+# Cloudflare "Managed Content" (AI content signals — search=yes, ai-train=no,
+# use=reference, plus Disallow rules for GPTBot, ClaudeBot, CCBot,
+# Google-Extended, Bytespider, Amazonbot, Applebot-Extended, meta-externalagent
+# and CloudflareBrowserRenderingCrawler). Cloudflare appends that block to an
+# origin robots.txt when one exists, but that has NOT been verified for this
+# zone. After the first deploy, run:
+#     curl https://www.jigripper.com/robots.txt
+# and confirm BOTH this content and the "BEGIN Cloudflare Managed content"
+# block are present. If the managed block replaces this file wholesale, the
+# Sitemap line has to move into the Cloudflare dashboard instead.
+
+User-agent: *
+Allow: /
+
+# Model weights and index blobs: ~164 MB fetched on every full render of "/".
+# Nothing here is needed to render the page's text, and letting a crawler pull
+# it repeatedly burns crawl budget for no benefit.
+Disallow: /362/
+Disallow: /890/
+Disallow: /931/
+Disallow: /sherpa-models/
+Disallow: /*.onnx$
+Disallow: /*.bin$
+
+# NOTE: /test-362.html is an internal harness and is deliberately NOT listed
+# here. A Disallow would stop crawlers fetching it, which would also stop them
+# ever seeing its <meta name="robots" content="noindex">. The noindex tag is
+# the mechanism that actually keeps it out of the index.
+
+Sitemap: https://www.jigripper.com/sitemap.xml

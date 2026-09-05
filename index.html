@@ -4,7 +4,137 @@
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
     <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         SEO / social head.
+
+         This file is `mobile/public/index.html`. Expo's CLI reads it as the SPA
+         template (@expo/cli src/start/server/webTemplate.ts →
+         getTemplateIndexHtmlAsync prefers the public folder's index.html over
+         its own bundled template), so everything here survives
+         `npx expo export --platform web`. On export the CLI:
+           1. substitutes the LANG_ISO_CODE placeholder in the html tag
+              (from app.json expo.web.lang, default "en");
+           2. substitutes the WEB_TITLE placeholder — not used below, so the
+              real title element written here is left alone;
+           3. injects the entry script immediately before the closing body tag;
+           4. injects a favicon link immediately before the closing head tag;
+           5. would inject a description meta if app.json set
+              expo.web.description — DO NOT SET IT, or the page gets two.
+
+         ⚠️ DANGER, verified the hard way: steps 1-4 are plain
+         String.prototype.replace calls on the FIRST occurrence anywhere in the
+         file. This comment must therefore never contain the literal placeholder
+         tokens or the literal closing head/body tags — an earlier draft
+         mentioned them here and the entry script was injected INTO THIS COMMENT
+         instead of into the document, producing a page that never booted.
+         Keep the real closing head and body tags below exactly where they are.
+         ══════════════════════════════════════════════════════════════════════ -->
+
     <title>JigRipper</title>
+    <meta name="description" content="JigRipper is a realtime Irish tune identifier. It will show you the sheet music for the trad tune currently being played." />
+    <link rel="canonical" href="https://www.jigripper.com/" />
+    <meta name="theme-color" content="#0A0E0D" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="apple-mobile-web-app-title" content="JigRipper" />
+    <meta name="application-name" content="JigRipper" />
+    <meta name="apple-itunes-app" content="app-id=6801636460" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="JigRipper" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:url" content="https://www.jigripper.com/" />
+    <meta property="og:title" content="JigRipper — identify Irish traditional tunes, live" />
+    <meta property="og:description" content="JigRipper is a realtime Irish tune identifier. It will show you the sheet music for the trad tune currently being played." />
+    <meta property="og:image" content="https://www.jigripper.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="JigRipper — identify Irish traditional tunes, live" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="JigRipper — identify Irish traditional tunes, live" />
+    <meta name="twitter:description" content="JigRipper is a realtime Irish tune identifier. It will show you the sheet music for the trad tune currently being played." />
+    <meta name="twitter:image" content="https://www.jigripper.com/og-image.png" />
+    <meta name="twitter:image:alt" content="JigRipper — identify Irish traditional tunes, live" />
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://www.jigripper.com/#organization",
+          "name": "Séisionnach LLC",
+          "url": "https://seisionnach.com",
+          "email": "hello@seisionnach.com",
+          "logo": "https://www.jigripper.com/og-image.png"
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://www.jigripper.com/#website",
+          "url": "https://www.jigripper.com/",
+          "name": "JigRipper",
+          "description": "JigRipper is a realtime Irish tune identifier. It will show you the sheet music for the trad tune currently being played.",
+          "inLanguage": "en",
+          "publisher": { "@id": "https://www.jigripper.com/#organization" }
+        },
+        {
+          "@type": "SoftwareApplication",
+          "@id": "https://www.jigripper.com/#app",
+          "name": "JigRipper",
+          "alternateName": "JigRipper — Irish tune identifier",
+          "applicationCategory": "MusicApplication",
+          "operatingSystem": "iOS, iPadOS, watchOS, Android, Wear OS",
+          "description": "JigRipper is a realtime Irish tune identifier. It will show you the sheet music for the trad tune currently being played.",
+          "url": "https://www.jigripper.com/",
+          "downloadUrl": "https://apps.apple.com/us/app/jigripper/id6801636460",
+          "softwareVersion": "1.0.2",
+          "inLanguage": "en",
+          "image": "https://www.jigripper.com/og-image.png",
+          "featureList": [
+            "Live identification of Irish traditional tunes from a repertoire of over 22,000 tunes",
+            "Sheet music rendered for every tune",
+            "A cursor that follows the player through the score",
+            "Save tunes, sets and whole sessions for later",
+            "Analyse an existing audio recording",
+            "Apple Watch and Wear OS companions",
+            "Runs entirely on device — no internet connection required"
+          ],
+          "author": { "@id": "https://www.jigripper.com/#organization" },
+          "publisher": { "@id": "https://www.jigripper.com/#organization" },
+          "offers": {
+            "@type": "Offer",
+            "price": "6.99",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock",
+            "url": "https://apps.apple.com/us/app/jigripper/id6801636460"
+          }
+        },
+        {
+          "@type": "WebApplication",
+          "@id": "https://www.jigripper.com/#webapp",
+          "name": "JigRipper for the web",
+          "applicationCategory": "MusicApplication",
+          "browserRequirements": "Requires a modern browser with Web Audio and WebAssembly support",
+          "operatingSystem": "Any",
+          "url": "https://www.jigripper.com/",
+          "description": "JigRipper is a realtime Irish tune identifier. It will show you the sheet music for the trad tune currently being played.",
+          "isAccessibleForFree": true,
+          "inLanguage": "en",
+          "publisher": { "@id": "https://www.jigripper.com/#organization" },
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "USD",
+            "availability": "https://schema.org/InStock"
+          }
+        }
+      ]
+    }
+    </script>
+
     <!-- The `react-native-web` recommended style reset: https://necolas.github.io/react-native-web/docs/setup/#root-element -->
     <style id="expo-reset">
       /* These styles make the body full-height */
@@ -23,15 +153,49 @@
         flex: 1;
       }
     </style>
-  <link rel="shortcut icon" href="/favicon.ico" /></head>
+
+    <style id="boot-shell">
+      /* Pre-hydration boot shell. React replaces #root's children when the
+         bundle mounts, so this is what a visitor reads while the 1.1 MB
+         bundle downloads and parses. Deliberately tiny and inline: no extra
+         request, no webfont, no layout shift once the app takes over. */
+      body { background: #0A0E0D; }
+    </style>
+  <link rel="icon" href="/favicon.ico" /></head>
 
   <body>
     <!-- Use static rendering with Expo Router to support running without JavaScript. -->
     <noscript>
-      You need to enable JavaScript to run this app.
+      <h1>JigRipper — identify Irish traditional tunes, live</h1>
+      <p>
+        JigRipper listens to Irish traditional music as it is played and tells you
+        what the tune is — the jig, the reel, the hornpipe, the polka — then shows
+        the sheet music and follows the player through the score.
+      </p>
+      <p>
+        The browser version needs JavaScript. The
+        <a href="https://apps.apple.com/us/app/jigripper/id6801636460">iPhone and iPad app</a>
+        needs no internet connection at all.
+      </p>
+      <p>
+        <a href="/what-tune-is-this.html">How JigRipper identifies a tune</a> ·
+        <a href="/support.html">Support</a> ·
+        <a href="/privacy">Privacy</a>
+      </p>
     </noscript>
     <!-- The root element for your Expo app. -->
     <div id="root"></div>
-  <script src="/_expo/static/js/web/entry-edac60255bd792fc1aa78ed94a1214db.js" defer></script>
+    <!-- ⚠️ NO PRE-HYDRATION CONTENT IN #root. A "boot" panel with real copy
+         used to live here so a crawler that does not execute JavaScript would
+         still find prose. It also rendered for a fraction of a second on every
+         load and was then replaced by the app's own loading screen — a visible
+         flash of different content on a paid product, which is not worth it.
+
+         The crawlable text has two better homes that cost nothing visually:
+         the <noscript> block above (parsed by crawlers, never rendered for
+         anyone with JavaScript) and what-tune-is-this.html, a genuinely static
+         page. Content here would in any case be discarded on hydration, so
+         Google's renderer never sees it either. -->
+  <script src="/_expo/static/js/web/entry-1b0e8eff31a29016e81cdd90b476544e.js" defer></script>
 </body>
 </html>

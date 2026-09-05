@@ -8,9 +8,14 @@
 
   Serve via the dev server (or any static host) and visit /test-362.html.
 -->
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
+<!-- Internal harness, but publicly reachable at https://www.jigripper.com/test-362.html.
+     Kept OUT of robots.txt on purpose: a Disallow would stop crawlers fetching
+     the page at all, and therefore stop them ever seeing this tag. noindex is
+     what actually keeps it out of the index. -->
+<meta name="robots" content="noindex, nofollow">
 <title>model #362 — browser DSP+inference test</title>
 <style>
   body { font: 14px/1.45 system-ui, sans-serif; background: #0a0e0d; color: #d2dccf; margin: 24px; }

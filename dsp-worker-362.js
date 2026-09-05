@@ -41,7 +41,7 @@
  * Messages back (worker → main):
  *   { type: 'ready' }                              once everything's loaded
  *   { type: 'init-error', error }
- *   { type: 'result', topK, dspMs, infMs, nWindows, bufferSec }
+ *   { type: 'result', topK, winMaxCos, winTopCos, dspMs, infMs, nWindows, bufferSec }
  *   { type: 'process-error', error }
  */
 
@@ -193,10 +193,11 @@ async function fetchJson(url) {
 let _dev = false;
 const _dlog = (...args) => { if (_dev) console.log(...args); };
 
-async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, wasmVersion, dev }) {
+async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, wasmVersion, softmaxT, dev }) {
     _dev = !!dev;
     _baseUrl = baseUrl || '';
     _assetsBase = assetsBase || '';
+    if (typeof softmaxT === 'number' && softmaxT > 0) SOFTMAX_T = softmaxT;
     _inputSr = inputSr | 0;
     if (_inputSr <= 0) throw new Error(`bad inputSr ${inputSr}`);
 
@@ -419,7 +420,17 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, was
 
 /* ── Per-cycle inference ────────────────────────────────────────────── */
 
-const _tmpProbs = new Float32Array(28491);
+/* Per-window softmax scratch. Sized from the MODEL's actual class count, not a
+ * constant — #362 emits 28 491 logits and #890 emits 28 494, and a short buffer
+ * fails SILENTLY here: out-of-bounds TypedArray writes are dropped, reads come
+ * back `undefined`, so the softmax denominator would miss the tail classes and
+ * `meanProbs[c] += undefined` would poison those entries with NaN. Grown on
+ * first use and whenever the width changes. */
+let _tmpProbs = new Float32Array(0);
+function ensureTmpProbs(n) {
+    if (_tmpProbs.length !== n) _tmpProbs = new Float32Array(n);
+    return _tmpProbs;
+}
 
 // Temperature for softening per-cycle predictions before they hit the
 // Markov posterior. #362's cosine-ArcFace head is ×64-scaled — vanilla
@@ -443,7 +454,12 @@ const _tmpProbs = new Float32Array(28491);
 //         headroom above CONFIDENCE_FLOOR so the lock survives the
 //         occasional weak cycle that's typical of mid-phrase audio
 //         (sustained note, breath, tail of a roll, etc.)
-const SOFTMAX_T = 1.5;
+// ⚠️ MODEL-SCOPED — supplied by the bundle at init (constants.ts MODEL_SOFTMAX_T),
+// because calibration belongs to the weights, not to this file. 1.5 is #362's
+// value and remains the fallback. #890 measured median top-1 0.994 at 1.5 (vs the
+// 30-60% this constant was chosen to produce), leaving the Markov chain no inertia
+// and making the lock flap on every instantaneous argmax change.
+let SOFTMAX_T = 1.5;
 
 function softmaxInPlace(arr) {
     const invT = 1 / SOFTMAX_T;
@@ -463,9 +479,9 @@ function softmaxInPlace(arr) {
  * same ordering — main thread reproduces it from tune_index.json.
  *
  * Also pre-builds `_classToDense[class_idx] = dense_tune_idx`, so the
- * per-tune-MAX hot loop is a single 28491-pass with no Map lookups. */
+ * per-tune-MAX hot loop is a single n_classes-pass with no Map lookups. */
 let _denseTuneIds = null;       // Int32Array, length n_tunes (~22410)
-let _classToDense = null;       // Int32Array, length n_classes (~28491)
+let _classToDense = null;       // Int32Array, length n_classes (362: 28 491, 890: 28 494)
 let _nTunes = 0;
 let _nClasses = 0;
 
@@ -634,11 +650,43 @@ async function processBuffer(droneSubtract) {
     const nClasses = logits.length / nWindows;
 
     /* Per-window softmax → mean across windows */
+    /* Per-window MAX COSINE — the abstention signal.
+     * The head emits 64*(e-hat . W-hat), so dividing the top logit by 64 recovers
+     * the raw cosine. It is TEMPERATURE-INDEPENDENT, which is what makes it useful:
+     * every softmax-derived confidence we have moves when SOFTMAX_T moves, and the
+     * Markov posterior downstream concentrates by design, so neither can say "the
+     * model is unsure". Cosine can. Training-side AUROC right-vs-wrong window is
+     * ~0.90 across 362/879/890 (shared scale), with maxcos >= 0.26 keeping 82.5% of
+     * right windows while rejecting 85% of wrong ones. */
+    const ARCFACE_SCALE = 64;
+    const winMaxCos = new Float32Array(nWindows);
+    /* Top-5 (classIdx, cosine) per window — diagnostic payload so a confusion can
+     * be checked against the cosine scale offline (mailbox seq 297 asked for
+     * exactly this on the Bucks->Greig's windows). */
+    const winTopCos = [];
+
     const meanProbs = new Float32Array(nClasses);
+    const tmpProbs = ensureTmpProbs(nClasses);
     for (let w = 0; w < nWindows; w++) {
-        for (let c = 0; c < nClasses; c++) _tmpProbs[c] = logits[w * nClasses + c];
-        softmaxInPlace(_tmpProbs);
-        for (let c = 0; c < nClasses; c++) meanProbs[c] += _tmpProbs[c];
+        const base = w * nClasses;
+        let mx = -Infinity;
+        for (let c = 0; c < nClasses; c++) { const v = logits[base + c]; if (v > mx) mx = v; }
+        winMaxCos[w] = mx / ARCFACE_SCALE;
+        // Cheap top-5 without sorting 28k entries.
+        const best = [];
+        for (let c = 0; c < nClasses; c++) {
+            const v = logits[base + c];
+            if (best.length < 5) { best.push([c, v]); if (best.length === 5) best.sort((a, b) => b[1] - a[1]); }
+            else if (v > best[4][1]) {
+                best[4] = [c, v];
+                for (let i = 4; i > 0 && best[i][1] > best[i - 1][1]; i--) { const t = best[i]; best[i] = best[i - 1]; best[i - 1] = t; }
+            }
+        }
+        winTopCos.push(best.map(([c, v]) => ({ c, cos: +(v / ARCFACE_SCALE).toFixed(4) })));
+
+        for (let c = 0; c < nClasses; c++) tmpProbs[c] = logits[base + c];
+        softmaxInPlace(tmpProbs);
+        for (let c = 0; c < nClasses; c++) meanProbs[c] += tmpProbs[c];
     }
     const invNW = 1 / nWindows;
     for (let c = 0; c < nClasses; c++) meanProbs[c] *= invNW;
@@ -648,7 +696,7 @@ async function processBuffer(droneSubtract) {
     aggregatePerTuneMax(meanProbs, tuneProbs);
     const topK = topKFromTuneProbs(tuneProbs, TOP_K);
 
-    return { topK, tuneProbs, chromaSummary, chromaSeq, dspMs, infMs, nWindows, melodicPeak };
+    return { topK, tuneProbs, chromaSummary, chromaSeq, dspMs, infMs, nWindows, melodicPeak, winMaxCos, winTopCos };
 }
 
 /* ── Message dispatch ────────────────────────────────────────────────── */
@@ -687,6 +735,8 @@ self.onmessage = async (e) => {
                 {
                     type: 'result',
                     topK: result.topK,
+                    winMaxCos: result.winMaxCos ? Array.from(result.winMaxCos) : [],
+                    winTopCos: result.winTopCos ?? [],
                     tuneProbs: tuneProbsBuf,
                     chromaSummary: chromaBuf,
                     chromaSeq: chromaSeqBuf,

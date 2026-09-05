@@ -28,20 +28,33 @@
 // ── Worker → log relay ────────────────────────────────────────────────────
 // Worker threads can't use the main-thread console-relay, so their logs never
 // reach /tmp/app-console.log. POST straight to the same relay endpoint (a
-// CORS-simple text POST — no preflight). Dev-only; silent no-op if it's offline.
-// DEV only: the worker has no __DEV__, so gate on being served from the dev server
-// (localhost). In production (jigripper.com) wlog is a COMPLETE no-op — no console
-// spam (efficiency) and no localhost fetch (which trips Chrome's Local Network Access
-// prompt — correctness).
+// CORS-simple text POST — no preflight).
+//
+// GATED ON THE HOSTNAME, not on __DEV__ (which a worker doesn't have anyway):
+// a localhost POST from this worker on live jigripper.com raised Chrome's Local
+// Network Access prompt for real users. A relay only means anything when the
+// page came from a dev machine, so allow exactly the hosts that cannot be the
+// public site. In production this is a COMPLETE no-op — no console spam, no
+// fetch. Mirrors isDevHost() in src/utils/console-relay.ts; keep them in step.
 var WORKER_DEV = (function () {
-  try { var h = (self.location && self.location.hostname) || ''; return h === 'localhost' || h === '127.0.0.1'; }
-  catch (_) { return false; }
+  try {
+    var h = ((self.location && self.location.hostname) || '').toLowerCase().replace(/^\[|\]$/g, '');
+    if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+    if (h.slice(-6) === '.local' || h.slice(-7) === '.ts.net') return true;
+    var m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+    if (!m) return false;
+    var a = +m[1], b = +m[2];
+    return a === 10 || a === 127 || (a === 192 && b === 168) ||
+           (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+  } catch (_) { return false; }
 })();
+// Same host that served the worker, so a phone on the LAN relays back too.
+var RELAY_URL = WORKER_DEV ? 'http://' + self.location.hostname + ':8124/log' : '';
 function wlog(m) {
   if (!WORKER_DEV) return;
   try { console.log('[presence-worker]', m); } catch (_) {}
   try {
-    fetch('http://localhost:8124/log', {
+    fetch(RELAY_URL, {
       method: 'POST',
       body: new Date().toISOString() + ' [log] [presence-worker] ' + m,
       keepalive: true,
