@@ -190,6 +190,7 @@ async function fetchJson(url) {
 /** Dev flag — set by the main thread on init. False on prod gh-pages
  *  builds so the worker's own diagnostic logs stay off the user's
  *  console. */
+let _tonicSession = null, _tonicInput = null, _tonicOutput = null;
 let _dev = false;
 const _dlog = (...args) => { if (_dev) console.log(...args); };
 
@@ -401,6 +402,33 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, was
     _inputName  = _session.inputNames[0];
     _outputName = _session.outputNames[0];
 
+    /* ── Tonic sidecar (optional) ───────────────────────────────────────────
+     * A 1.6 MB conv net that reads the SAME fold12 tensor the recognition model
+     * consumes and emits absolute tonic pitch-class logits (index 0 = C). It is
+     * a separate model by necessity: our recognition input is KeyCanon-
+     * canonicalised, so absolute key is destroyed before the backbone sees it
+     * and no aux head on those weights could recover it.
+     *
+     * Wholly optional: any failure here leaves _tonicSession null and the whole
+     * feature simply does not run. It must never be able to stop tune ID. */
+    try {
+        const tonicUrl = `${_baseUrl}/tonic/tonic_sidecar_fp16.onnx${modelVersion ? `?v=${modelVersion}` : ''}`;
+        const tr = await fetch(tonicUrl);
+        if (tr.ok) {
+            _tonicSession = await self.ort.InferenceSession.create(
+                await tr.arrayBuffer(),
+                { executionProviders: ['wasm'], graphOptimizationLevel: 'all' },
+            );
+            _tonicInput = _tonicSession.inputNames[0];
+            _tonicOutput = _tonicSession.outputNames[0];
+            _dlog(`[tonic] sidecar ready (${_tonicInput} → ${_tonicOutput})`);
+        } else {
+            _dlog(`[tonic] sidecar unavailable: ${tr.status}`);
+        }
+    } catch (e) {
+        _dlog(`[tonic] sidecar failed to load: ${e && e.message}`);
+    }
+
     const [lm, ti, cr] = await Promise.all([
         fetchJson(`${_assetsBase}/label_map.json`),
         fetchJson(`${_assetsBase}/tune_index.json`),
@@ -579,6 +607,22 @@ async function processBuffer(droneSubtract) {
         _wasm.HEAPF32.buffer, _tensorsPtr, nWindows * TENSOR_SIZE
     ).slice();
 
+    /* ── Tonic sidecar input — captured HERE, deliberately ──────────────────
+     * Its contract states drone subtraction MUST NOT be applied: the model was
+     * trained on plain fold12, and a sustained tonic is the single most
+     * informative feature it has, so subtracting one would be removing the
+     * signal. Our subtraction happens on the next line, hence the copy. It is
+     * ALSO pre-KeyCanon and G-based (bin 0 = G), which is exactly the frame the
+     * sidecar expects — `client_rotation_required: false` — so nothing is
+     * rotated on the way in or on the way out.
+     *
+     * One window only (the live path emits nWindows = 1); at ~2 ms a forward
+     * this is noise against a ~500 ms cadence, but batching every window would
+     * not be. */
+    const tonicInputTensor = _tonicSession && nWindows > 0
+        ? tensors.slice(0, TENSOR_SIZE)
+        : null;
+
     // Stationary-drone floor subtraction (Settings toggle, default OFF) — remove a
     // constant pitched tone (AC hum in one bin) from the fold12 tensors before the
     // summary / display seq / KeyCanon / inference, so it cleans both the classifier
@@ -696,7 +740,29 @@ async function processBuffer(droneSubtract) {
     aggregatePerTuneMax(meanProbs, tuneProbs);
     const topK = topKFromTuneProbs(tuneProbs, TOP_K);
 
-    return { topK, tuneProbs, chromaSummary, chromaSeq, dspMs, infMs, nWindows, melodicPeak, winMaxCos, winTopCos };
+    /* Tonic sidecar forward. Failure is swallowed: a broken key hint must never
+     * take down tune identification, which is what the app is for. */
+    let tonic = null;
+    if (tonicInputTensor) {
+        try {
+            const out = await _tonicSession.run({
+                [_tonicInput]: new self.ort.Tensor('float32', tonicInputTensor, [1, N_CHROMA, WINDOW_FRAMES]),
+            });
+            const logits = out[_tonicOutput].data;
+            // Softmax over the 12 absolute pitch classes (index 0 = C).
+            let mx = -Infinity;
+            for (let i = 0; i < N_CHROMA; i++) if (logits[i] > mx) mx = logits[i];
+            const probs = new Array(N_CHROMA);
+            let sum = 0;
+            for (let i = 0; i < N_CHROMA; i++) { const e = Math.exp(logits[i] - mx); probs[i] = e; sum += e; }
+            for (let i = 0; i < N_CHROMA; i++) probs[i] /= sum;
+            tonic = probs;
+        } catch (e) {
+            _dlog(`[tonic] forward failed: ${e && e.message}`);
+        }
+    }
+
+    return { topK, tuneProbs, chromaSummary, chromaSeq, dspMs, infMs, nWindows, melodicPeak, winMaxCos, winTopCos, tonic };
 }
 
 /* ── Message dispatch ────────────────────────────────────────────────── */
@@ -744,6 +810,11 @@ self.onmessage = async (e) => {
                     infMs: result.infMs,
                     nWindows: result.nWindows,
                     melodicPeak: result.melodicPeak,
+                    // ⚠️ This message is built field-by-field, so anything added to
+                    // processBuffer's return value is DROPPED here unless it is also
+                    // listed. The tonic sidecar was computed and silently discarded
+                    // exactly that way — it presented as "the sidecar never ran".
+                    tonic: result.tonic ?? null,
                     bufferSec: _ringLen / _inputSr,
                 },
                 transfer.length > 0 ? transfer : undefined,

@@ -1,0 +1,921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JigRipper — Help &amp; Guide</title>
+<meta name="description" content="How to use JigRipper: listening for tunes, reading the tune river, sheet music, search, sessions and sets.">
+<meta name="color-scheme" content="dark">
+<link rel="canonical" href="https://www.jigripper.com/help/">
+<style>
+/* ═══════════════════════════════════════════════════════════════════
+   JigRipper guide — elven design language.
+
+   Palette, proportion and ornament follow the app's own vocabulary
+   (see src/components/SettingsSheet.tsx, app/index.tsx styles):
+   Fibonacci spacing on an 8 px base, a phi type scale, gold reserved
+   for what is active, silver-green for everything secondary, and
+   open frames rather than boxes.
+
+   One deliberate departure, noted in the annotation layer below.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Colour ─────────────────────────────────────────── */
+  --ground:   #0A0E0D;   /* forest-canopy shadow   */
+  --surface:  #141C19;   /* shadowed stone         */
+  --gold:     #C9A84C;   /* mallorn leaf — ACTIVE  */
+  --silver:   #8FBFA0;   /* elven silver           */
+  --welkynd:  #A3C4D9;   /* blue-white glow        */
+  --text:     #E8E4DA;   /* pale stone             */
+  --muted:    #7A8B7E;   /* weathered verdigris    */
+
+  /* ── Light as structure: felt, not seen ─────────────── */
+  --rule:      rgba(143, 191, 160, 0.14);
+  --rule-soft: rgba(143, 191, 160, 0.08);
+  --rule-gold: rgba(201, 168, 76, 0.30);
+  --glow:      0 0 55px rgba(143, 191, 160, 0.05);
+
+  /* ── Fibonacci, base 8 ──────────────────────────────── */
+  --f1:  8px;  --f2: 13px;  --f3: 21px;  --f4: 34px;
+  --f5: 55px;  --f6: 89px;  --f7: 144px;
+}
+
+* { box-sizing: border-box; }
+
+html {
+  background: var(--ground);
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  font-size: 17px;
+  font-weight: 300;          /* inscribed, not printed */
+  line-height: 1.618;
+  letter-spacing: 0.006em;   /* 0.6% */
+}
+
+/* ── Skip link ────────────────────────────────────────── */
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 10;
+  background: var(--gold); color: var(--ground);
+  padding: var(--f2) var(--f3);
+  border-radius: 0 0 var(--f1) 0;
+  font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.skip:focus { left: 0; }
+
+a:focus-visible, .skip:focus {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
+  border-radius: 5px;
+}
+
+/* ── Measure: 65–75 characters ────────────────────────── */
+.wrap { max-width: 34rem; margin: 0 auto; padding: 0 var(--f3) var(--f7); }
+
+/* Figures breathe wider than the text they serve — a colonnade
+   framing a view, not a column. */
+.wide { width: min(55rem, calc(100vw - var(--f4))); margin-left: 50%; transform: translateX(-50%); }
+
+/* ── Masthead ─────────────────────────────────────────── */
+header.masthead { padding: var(--f6) 0 var(--f4); }
+h1 {
+  font-size: 42px; line-height: 1.15; font-weight: 300;
+  letter-spacing: 0.03em;               /* 3% display */
+  margin: 0 0 var(--f2); color: var(--text);
+}
+.tagline {
+  margin: 0; color: var(--silver);
+  font-size: 13px; font-weight: 400;
+  letter-spacing: 0.16em; text-transform: uppercase;
+}
+.lede {
+  margin: var(--f4) 0 0; font-size: 21px; line-height: 1.618;
+  color: var(--muted); font-weight: 300;
+}
+
+/* ── Headings ─────────────────────────────────────────── */
+h2 {
+  font-size: 27px; line-height: 1.3; font-weight: 400;
+  letter-spacing: 0.02em; color: var(--text);
+  margin: var(--f6) 0 var(--f3);
+  padding-top: var(--f4);
+  border-top: 1px solid var(--rule-soft);   /* open frame: one side only */
+}
+h3 {
+  font-size: 21px; font-weight: 400; letter-spacing: 0.012em;
+  color: var(--silver); margin: var(--f5) 0 var(--f2);
+}
+
+p { margin: 0 0 var(--f3); }
+strong { color: var(--text); font-weight: 500; }
+em { color: var(--silver); font-style: normal; }
+
+a { color: var(--silver); text-decoration-thickness: 1px; text-underline-offset: 4px; }
+a:hover { color: var(--gold); }
+
+ul, ol { margin: 0 0 var(--f3); padding-left: var(--f3); }
+li { margin-bottom: var(--f2); }
+
+/* ── Contents: an open frame, ruled top and bottom ────── */
+nav.toc {
+  margin: var(--f5) 0 0;
+  padding: var(--f3) 0;
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+}
+nav.toc h2 {
+  font-size: 12px; letter-spacing: 0.10em; text-transform: uppercase;
+  color: var(--silver); font-weight: 400;
+  margin: 0 0 var(--f2); padding: 0; border: 0;
+}
+nav.toc ol { list-style: none; padding: 0; margin: 0; }
+nav.toc li { margin-bottom: var(--f1); }
+
+/* ── Callouts: a gold rule at the edge, never a box ───── */
+aside.hint {
+  margin: var(--f4) 0;
+  padding: var(--f3) 0 var(--f3) var(--f3);
+  border-left: 2px solid var(--gold);
+  background: linear-gradient(90deg, rgba(201,168,76,0.055), rgba(201,168,76,0));
+  border-radius: 5px 0 0 5px;
+}
+aside.hint p { margin: 0; }
+aside.hint .hint-label {
+  display: block; font-size: 12px; font-weight: 500;
+  letter-spacing: 0.10em; text-transform: uppercase;
+  color: var(--gold); margin-bottom: var(--f1);
+}
+aside.hint b { color: var(--text); font-weight: 500; }
+
+/* ── Figures ──────────────────────────────────────────── */
+figure { margin: var(--f5) 0; }
+figure img, figure svg {
+  display: block; width: 100%; height: auto;
+  border-radius: var(--f2);
+}
+figure img { box-shadow: var(--glow); }
+figcaption {
+  margin-top: var(--f2); font-size: 15px; line-height: 1.5;
+  color: var(--muted);
+}
+figure.plate    { max-width: 320px; }
+figure.sliver   { max-width: 420px; }
+figure.gem      { max-width: 72px; }
+
+/* ── Keyed list: the numbers echo the markers on the plate ── */
+ol.keyed { list-style: none; padding: 0; margin: var(--f3) 0 var(--f3); counter-reset: k; }
+ol.keyed li {
+  counter-increment: k; position: relative;
+  padding-left: var(--f4); margin-bottom: var(--f2);
+}
+ol.keyed li::before {
+  content: counter(k);
+  position: absolute; left: 0; top: 0.28em;
+  width: 23px; height: 23px; border-radius: 50%;
+  border: 1px solid var(--rule-gold);
+  box-shadow: 0 0 13px rgba(201,168,76,0.22);
+  color: var(--gold); font-size: 12px; font-weight: 500;
+  display: flex; align-items: center; justify-content: center;
+  letter-spacing: 0;
+}
+
+/* ── Control glossary ─────────────────────────────────── */
+dl.controls { margin: var(--f3) 0 var(--f4); padding: 0; }
+dl.controls dt {
+  color: var(--text); font-weight: 500; margin-top: var(--f3);
+  display: flex; align-items: center; gap: var(--f2);
+}
+dl.controls dt:first-child { margin-top: 0; }
+dl.controls dd { margin: var(--f1) 0 0; color: var(--muted); }
+.glyph {
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--rule);
+  color: var(--silver); font-size: 15px; font-weight: 300;
+}
+
+/* ── Small print ──────────────────────────────────────── */
+footer.colophon {
+  margin-top: var(--f6); padding-top: var(--f4);
+  border-top: 1px solid var(--rule);
+  color: var(--muted); font-size: 15px;
+}
+footer.colophon p { margin-bottom: var(--f2); }
+.backlink { display: inline-block; margin-top: var(--f5); font-size: 15px; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+@media print {
+  body { background: #fff; color: #000; }
+  nav.toc { display: none; }
+}
+</style>
+</head>
+<body>
+
+<a class="skip" href="#glance">Skip to the guide</a>
+
+<div class="wrap">
+
+<header class="masthead">
+  <h1>JigRipper Help</h1>
+  <p class="tagline">Irish Tune Identifier</p>
+  <p class="lede">
+    JigRipper listens while you play and tells you the name of the tune.
+    This page walks through everything it does, one thing at a time.
+  </p>
+
+  <nav class="toc" aria-labelledby="toc-head">
+    <h2 id="toc-head">On this page</h2>
+    <ol>
+      <li><a href="#glance">The app at a glance</a></li>
+      <li><a href="#start">Getting started</a></li>
+      <li><a href="#river">The tune river</a></li>
+      <li><a href="#sheet">Sheet music</a></li>
+      <li><a href="#search">Searching for a tune</a></li>
+      <li><a href="#library">Sessions, tunes and sets</a></li>
+      <li><a href="#upload">Listening to a recording</a></li>
+      <li><a href="#settings">Settings worth knowing</a></li>
+      <li><a href="#trouble">When it goes wrong</a></li>
+    </ol>
+  </nav>
+</header>
+
+<main>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="glance">The app at a glance</h2>
+
+<p>
+  This is JigRipper part-way through a session, listening and naming tunes as
+  they are played. The numbers mark the parts you will use most.
+</p>
+
+<figure class="wide">
+  <svg viewBox="0 0 922 1016" role="img" aria-labelledby="plate-t plate-d">
+    <title id="plate-t">The JigRipper screen with its six main areas numbered</title>
+    <desc id="plate-d">
+      A single tall screen. Across the top is a search box reading “Search tunes”
+      with buttons for sessions, tunes, sets and settings (marker 1). Below it a
+      card of engraved sheet music titled “Drowsy Maggie”, a reel in E Dorian in
+      four four, with a row of key buttons — All, A Dorian, B Aeolian, D Ionian,
+      E Dorian, G Ionian — and a setting counter reading one of thirty-one
+      (marker 2). Under the card a row of buttons reading save, upload, tuner and
+      expand. Beside them a status line reading “LOCKED · 16S / Drowsy Maggie”
+      (marker 3), a round woven ring (marker 4), and the tune’s details: reel,
+      four four, E Dorian, fiddle and flute. Across the bottom is the tune river,
+      a horizontal band of coloured dots carrying two named tunes — Drowsy Maggie
+      in E Dorian and Banish Misfortune in D Mixolydian — over a row of clock
+      times. At its right-hand edge a third, much narrower band is still
+      forming, with its name cut short because the band is not yet wide enough
+      to hold it (marker 5). Beneath the screen an arrow runs from right to
+      left, labelled NOW at the right and EARLIER at the left (marker 6).
+    </desc>
+
+    <defs>
+      <filter id="mglow" x="-80%" y="-80%" width="260%" height="260%">
+        <feGaussianBlur stdDeviation="5" result="b"/>
+        <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <style>
+        .mk    { fill: none; stroke: #C9A84C; stroke-width: 1.7; opacity: 0.95; }
+        .mkhalo{ fill: #0A0E0D; opacity: 0.55; }
+        .mnum  { fill: #E8E4DA; font: 500 20px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                 text-anchor: middle; letter-spacing: 0; }
+        /* Legibility over chrome: the app's own 1 px / 15 % rules vanish on a
+           dark screenshot, so these strokes are heavier and brighter. */
+        .lead  { fill: none; stroke: #C9A84C; stroke-width: 2.3; stroke-linecap: round; opacity: 0.9; }
+        .flow  { fill: none; stroke: #8FBFA0; stroke-width: 2.5; stroke-linecap: round; }
+        .flab  { fill: #E8E4DA; font: 400 19px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                 letter-spacing: 0.09em; }
+      </style>
+    </defs>
+
+    <!-- The screenshot is 1760 × 1786 device pixels drawn into 880 × 893 user
+         units, so it stays a true 2× asset at every width this figure is shown
+         at. Every marker below is placed against THOSE units: image point
+         (x, y) is (21 + x, 21 + y) here. -->
+    <image href="img/app-annotated.jpg" x="21" y="21" width="880" height="893"
+           preserveAspectRatio="xMidYMid meet"/>
+
+    <!-- 1 · search bar — marker in the bar's empty middle, lead back to the field -->
+    <path class="lead" d="M303,63 C262,74 210,70 162,64"/>
+    <g filter="url(#mglow)">
+      <circle class="mkhalo" cx="321" cy="63" r="17"/><circle class="mk" cx="321" cy="63" r="17"/>
+    </g>
+    <text class="mnum" x="321" y="70">1</text>
+
+    <!-- 2 · sheet music — marker in the blank between the third and fourth
+         staves, lead down onto the fourth -->
+    <path class="lead" d="M839,606 C828,620 816,628 801,634"/>
+    <g filter="url(#mglow)">
+      <circle class="mkhalo" cx="847" cy="590" r="17"/><circle class="mk" cx="847" cy="590" r="17"/>
+    </g>
+    <text class="mnum" x="847" y="597">2</text>
+
+    <!-- 3 · status line — marker sits clear above it, an ogee lead points down -->
+    <path class="lead" d="M510,752 C503,757 494,760 481,759"/>
+    <g filter="url(#mglow)">
+      <circle class="mkhalo" cx="521" cy="737" r="17"/><circle class="mk" cx="521" cy="737" r="17"/>
+    </g>
+    <text class="mnum" x="521" y="744">3</text>
+
+    <!-- 4 · the listen ring — the lead runs under the tune name, in the clear
+         band between it and the river, so it cannot read as pointing at text -->
+    <path class="lead" d="M408,806 C470,818 540,816 612,806"/>
+    <g filter="url(#mglow)">
+      <circle class="mkhalo" cx="391" cy="803" r="17"/><circle class="mk" cx="391" cy="803" r="17"/>
+    </g>
+    <text class="mnum" x="391" y="810">4</text>
+
+    <!-- 5 · the river's live edge -->
+    <path class="lead" d="M827,866 C848,874 866,880 887,886"/>
+    <g filter="url(#mglow)">
+      <circle class="mkhalo" cx="821" cy="849" r="17"/><circle class="mk" cx="821" cy="849" r="17"/>
+    </g>
+    <text class="mnum" x="821" y="856">5</text>
+
+    <!-- ── flow band, drawn BELOW the screen so nothing is obscured ── -->
+    <!-- Direction confirmed in TuneTimeline.tsx: the live edge is the far
+         right; scrolling left goes back into the session. -->
+    <path class="flow" d="M880,962 C700,962 460,962 200,962"/>
+    <path class="flow" d="M218,952 L200,962 L218,972"/>
+    <circle cx="886" cy="962" r="5" fill="#C9A84C"/>
+    <text class="flab" x="858" y="1000" text-anchor="end" fill="#C9A84C">NOW</text>
+    <text class="flab" x="200" y="1000">EARLIER</text>
+    <!-- 6 · sits on the flow line itself; its halo masks the stroke behind -->
+    <g filter="url(#mglow)">
+      <circle class="mkhalo" cx="540" cy="962" r="17" opacity="1"/><circle class="mk" cx="540" cy="962" r="17"/>
+    </g>
+    <text class="mnum" x="540" y="969">6</text>
+  </svg>
+
+  <figcaption>
+    A real session, mid-tune. Earlier tunes lie to the left; the reel being
+    played at this moment — <em>Drowsy Maggie</em>, named in the status line —
+    is still forming at the right-hand edge, its name too cramped to show in
+    full.
+  </figcaption>
+</figure>
+
+<ol class="keyed">
+  <li><strong>The search bar.</strong> Type a tune name here at any time. Your
+      saved sessions, tunes and sets live behind the buttons to its right.</li>
+  <li><strong>The sheet music.</strong> When a tune is named, its music appears
+      here on its own.</li>
+  <li><strong>The status line.</strong> What JigRipper is doing this second —
+      listening, identifying, or settled on a tune.</li>
+  <li><strong>The listen ring.</strong> Tap it to start and stop listening.
+      This is the control everything else follows from.</li>
+  <li><strong>The live edge of the river.</strong> Newly identified tunes appear
+      at the <strong>right-hand</strong> edge.</li>
+  <li><strong>Earlier tunes lie to the left.</strong> As the session goes on, the
+      river carries what you played away to the left. Scroll left to go back
+      through the evening.</li>
+</ol>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="start">Getting started</h2>
+
+<p>
+  Find the ring near the bottom of the screen, beside the word
+  <strong>listen</strong>. Tap it, and JigRipper starts listening through your
+  microphone.
+</p>
+
+<figure class="sliver">
+  <img src="img/listen-ring.png" width="1029" height="510"
+       alt="The word LISTEN in small capitals beside a circular ring drawn as a woven green knot.">
+  <figcaption>Tap the ring to start. Tap it again to stop.</figcaption>
+</figure>
+
+<p>
+  Play your tune. You do not have to start at the beginning, and you do not have
+  to play it perfectly.
+</p>
+
+<aside class="hint">
+  <span class="hint-label">Getting a good result</span>
+  <p>
+    <b>Give it eight seconds.</b> JigRipper listens in eight-second windows and
+    matches a whole phrase of a tune, not single notes. Keep playing — it needs
+    to hear enough of the part before it can name it.
+  </p>
+</aside>
+
+<h3>The buttons above the river</h3>
+
+<figure class="wide">
+  <img src="img/context-buttons.png" width="1842" height="252"
+       alt="Four small rounded buttons in a row, reading save, upload, tuner and expand.">
+  <figcaption>
+    These appear as they become useful. <strong>tuner</strong> shows only while
+    JigRipper is listening; <strong>save</strong> only once you have played
+    something.
+  </figcaption>
+</figure>
+
+<dl class="controls">
+  <dt>save</dt>
+  <dd>Keeps this session so you can come back to it.</dd>
+  <dt>upload</dt>
+  <dd>Hands JigRipper a recording instead of the microphone.</dd>
+  <dt>tuner</dt>
+  <dd>A tuning dial, for while you are listening.</dd>
+  <dt>expand</dt>
+  <dd>Makes the river taller. It then reads <strong>compact</strong> to put it back.</dd>
+</dl>
+
+<h3>What the status line says</h3>
+
+<dl class="controls">
+  <dt>listening</dt>
+  <dd>It can hear you, but has not settled on a tune yet.</dd>
+  <dt>identifying</dt>
+  <dd>It has a candidate in mind and is gathering more evidence.</dd>
+  <dt>locked</dt>
+  <dd>It has settled. The name appears beneath, with the tune type, time signature, tempo, key, and the instruments it thinks it can hear.</dd>
+  <dt>keep playing…</dt>
+  <dd>It heard music but could not match it. Play on — it keeps trying.</dd>
+  <dt>noise</dt>
+  <dd>It hears sound, but not music. A fan, a room, a conversation.</dd>
+  <dt>silence</dt>
+  <dd>Nothing loud enough to work with.</dd>
+</dl>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="river">The tune river</h2>
+
+<p>
+  The river is the record of your session. Every tune you play becomes a band in
+  it, laid out left to right in the order you played them.
+</p>
+
+<figure class="wide">
+  <img src="img/river.jpg" width="1960" height="408"
+       alt="A wide dark strip filled with small coloured dots, divided into three bands. Each band is labelled with a tune name and a key: Drowsy Maggie in E Dorian, Banish Misfortune in D Mixolydian, and Drowsy Maggie in E Dorian again. A row of clock times runs along the bottom, from 12:30:30a to 12:32:00a.">
+  <figcaption>
+    Three tunes from one session. Each band carries the tune name and the key it
+    was played in, and the times below say when each one happened. The dots
+    behind them are the notes JigRipper heard.
+  </figcaption>
+</figure>
+
+<h3>Scrolling back through it</h3>
+
+<ul>
+  <li><strong>On a phone or tablet:</strong> drag the river sideways with your finger.</li>
+  <li><strong>On a computer:</strong> use the mouse wheel over the river. An
+      ordinary up-and-down wheel moves it sideways. Clicking and dragging does
+      not scroll it.</li>
+</ul>
+
+<p>
+  While you are listening, the river follows along on its own. Scrolling back
+  stops that, so you can look at something without it sliding away. To return to
+  the present, press the <strong>▶</strong> button at the right-hand edge, scroll
+  all the way back to the right, tap an empty part of the river — or just wait.
+  It returns by itself after fifteen seconds.
+</p>
+
+<h3>Reading the bands</h3>
+
+<ul>
+  <li>A band is one tune played in one key. Playing the same tune twice in a row,
+      with less than about four seconds between, shows as a single band.</li>
+  <li>A short band will not have room for its label. A tune needs around ten
+      seconds of playing before its name will fit.</li>
+  <li>The faint colours only separate one tune from the next. They do not mean
+      anything about the music, and they are reused as the session goes on.</li>
+  <li><strong>If you change key,</strong> the band splits in two and the second
+      half shows the new key underneath the name. The name stays the same, and
+      there is no dividing line — the changed key is the signal.</li>
+</ul>
+
+<aside class="hint">
+  <span class="hint-label">Not a glitch</span>
+  <p>
+    <b>The river tidies itself up behind you.</b> For about the last ten minutes
+    it keeps re-reading what it heard, so a name can change, a boundary can
+    shift, or two bands can merge into one. That is it correcting itself with the
+    benefit of more of the tune — older parts of the river are settled and stay put.
+  </p>
+</aside>
+
+<h3>Tapping a band</h3>
+
+<p>
+  Tap any band to open that tune's sheet music, in the key you played it in. Tap
+  the same band again to let go of it.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="sheet">Sheet music</h2>
+
+<p>
+  Sheet music appears on its own when a tune is identified, and whenever you tap
+  a band in the river or pick a tune from search. The <strong>full screen</strong>
+  button fills the screen with it.
+</p>
+
+<figure class="wide">
+  <img src="img/sheet-fullscreen.jpg" width="1760" height="2560"
+       alt="A full screen of engraved sheet music. At the top left a close button and a small leaf-shaped clasp; in the centre the title Banish Misfortune with Jig, D Mixolydian and 6/8 beneath it; at the top right four round buttons. Below, a row of key buttons reading All, D Ionian, D Mixolydian and E Mixolydian, then arrows either side of 1/15. Nine staves of music in 6/8 follow.">
+  <figcaption>
+    A tune in full screen. The <strong>×</strong> at the top left closes it; the
+    leaf beside it is the clasp.
+  </figcaption>
+</figure>
+
+<h3>Keys and settings</h3>
+
+<figure class="wide">
+  <img src="img/sheet-keys-settings.png" width="1736" height="84"
+       alt="A row of rounded buttons: All (highlighted), A Dorian, B Aeolian, D Mixolydian. To the right, a left-pointing arrow, the text 1/11, and a right-pointing arrow.">
+  <figcaption>The key filter, and the setting counter.</figcaption>
+</figure>
+
+<p>
+  Most tunes have been written down many times, in slightly different versions.
+  Each one is a <strong>setting</strong>. <strong>1/11</strong> means you are
+  looking at the first of eleven, and the arrows either side step through them.
+</p>
+
+<p>
+  The buttons to the left filter by key. <strong>All</strong> shows every
+  setting; picking a key narrows the list to settings written in it.
+</p>
+
+<h3>The buttons</h3>
+
+<figure class="plate">
+  <img src="img/sheet-buttons-fullscreen.png" width="900" height="240"
+       alt="Four round outlined buttons in a row: a small crosshair, a beamed pair of eighth notes, a hollow diamond, and an arrow pointing up and to the right.">
+  <figcaption>The action row in full screen.</figcaption>
+</figure>
+
+<figure class="plate">
+  <img src="img/sheet-buttons.png" width="832" height="208"
+       alt="Four round outlined buttons in a row: a beamed pair of eighth notes, a hollow diamond, an arrow pointing up and to the right, and a small square outline.">
+  <figcaption>
+    The same row in the smaller sheet, which adds the square
+    <strong>full screen</strong> button on the end.
+  </figcaption>
+</figure>
+
+<dl class="controls">
+  <dt><span class="glyph" aria-hidden="true">⌖</span> Follow along</dt>
+  <dd>
+    Highlights the bar you are playing and moves through the music with you. It
+    only appears when the sheet on screen is the tune JigRipper is actually
+    listening to — if you are holding a different tune open, it has nothing to follow.
+  </dd>
+
+  <dt><span class="glyph" aria-hidden="true">♫</span> Show chords</dt>
+  <dd>Adds suggested chords above the staff. Only offered for tunes that do not already have them.</dd>
+
+  <dt><span class="glyph" aria-hidden="true">◇</span> Save this tune</dt>
+  <dd>Keeps the tune in your collection. The diamond fills in — <strong>◆</strong> — once saved. Tap it again to remove it.</dd>
+
+  <dt><span class="glyph" aria-hidden="true">↗</span> Open on thesession.org</dt>
+  <dd>Opens the tune's page on thesession.org, where the music came from.</dd>
+
+  <dt><span class="glyph" aria-hidden="true">▢</span> Full screen</dt>
+  <dd>A small outlined square, in the smaller sheet only. In full screen its place is taken by <strong>×</strong>, which closes.</dd>
+</dl>
+
+<h3>Holding a tune still</h3>
+
+<figure class="gem">
+  <img src="img/hold-clasp.png" width="200" height="200"
+       alt="A small gold emblem of two leaves clasped together around a central gem, on a dark square.">
+  <figcaption>Held.</figcaption>
+</figure>
+
+<p>
+  The clasp at the top left of the sheet says whether the music will change under
+  you. <strong>Green, with the leaves open,</strong> means it is live: when
+  JigRipper hears a new tune, the sheet changes to match.
+  <strong>Gold, with the leaves closed,</strong> means it is held, and the music
+  stays where it is no matter what it hears. Tap the clasp to switch.
+</p>
+
+<h3>Gestures on the music itself</h3>
+
+<p>These work on a touch screen, in both the small sheet and full screen.</p>
+
+<dl class="controls">
+  <dt>Long press</dt>
+  <dd>Holds the tune still, or lets it go again. The same thing the clasp does.</dd>
+  <dt>Tap the left or right edge</dt>
+  <dd>Steps to the previous or next setting. The middle of the sheet does nothing on purpose, so you can tap it without the music moving.</dd>
+  <dt>Double tap</dt>
+  <dd>Full screen, and back again.</dd>
+  <dt>Swipe left or right</dt>
+  <dd>Also steps through the settings.</dd>
+</dl>
+
+<p>
+  On a computer, use the buttons and arrows instead. The <strong>←</strong> and
+  <strong>→</strong> keys step through settings too, as long as you are not
+  typing in the search box.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="search">Searching for a tune</h2>
+
+<p>
+  The search box sits across the top of the screen. Type at least two letters of
+  a tune's name and matches appear underneath.
+</p>
+
+<figure class="wide">
+  <img src="img/search-results.jpg" width="1756" height="606"
+       alt="A list of search results. Each row has a tune name on the left and, on the right, the tune type and time signature: Morrison's, Jig 6/8; Morrison's Favourite, Jig 6/8; Forbes Morrison, Strathspey 4/4; Anne-Marie Morrison Of Borve, Jig 6/8; John Morrison Of Assynt House, Reel 4/4; Major George Morrison DSO, March 4/4; Grace Morrison Of Borve, Jig 6/8. The first row is highlighted in green.">
+  <figcaption>
+    Searching for “morrison”. Each row shows the name, the type of tune, and its
+    time signature. Tunes whose name begins with what you typed come first.
+  </figcaption>
+</figure>
+
+<p>
+  Tap a result to open its sheet music. Search matches
+  <strong>tune names only</strong> — not alternative names, not types, not keys.
+</p>
+
+<h3>On a computer</h3>
+
+<ul>
+  <li>Just start typing anywhere on the page — the letters go into the search box.</li>
+  <li><strong>Down</strong> and <strong>Up</strong> arrows move through the results.</li>
+  <li><strong>Enter</strong> opens the highlighted one.</li>
+  <li><strong>Escape</strong> clears the box and closes the list.</li>
+</ul>
+
+<p>
+  Tapping the empty search box brings back the last few tunes you looked at,
+  under the heading <strong>RECENT</strong>.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="library">Sessions, tunes and sets</h2>
+
+<p>
+  Three collections sit at the right-hand end of the search bar:
+  <strong>sessions</strong>, <strong>tunes</strong> and <strong>sets</strong>. On
+  a narrow screen they fold into a single button reading
+  <strong>library ▾</strong>. The number in brackets is how many you have.
+</p>
+
+<h3>Sessions</h3>
+
+<p>
+  A session is a whole evening's playing — the river, saved. Press
+  <strong>save</strong> above the river. It is named after the date and time, and
+  it briefly reads <strong>saved ✓</strong> so you know it took.
+</p>
+
+<p>
+  Open the sessions list and tap one to load it back into the river, where you
+  can scroll through it and tap tunes exactly as you did on the night.
+</p>
+
+<dl class="controls">
+  <dt>share</dt>
+  <dd>Hands the session to whatever you normally share with — messages, mail,
+      notes. On a desktop browser that cannot share, it copies to the clipboard instead.</dd>
+  <dt>copy</dt>
+  <dd>Copies the session straight to the clipboard as plain text.</dd>
+</dl>
+
+<p>Either way you get something like this, ready to paste anywhere:</p>
+
+<ul>
+  <li>the session name, how long it ran, and how many tunes;</li>
+  <li>the tunes grouped into sets, with the time each set started;</li>
+  <li>a thesession.org link under every tune.</li>
+</ul>
+
+<p>
+  The shared text is a summary, not a transcript. Tunes you played for less than
+  about twenty seconds are left out, and a tune repeated immediately is listed
+  once. So the shared list can be shorter than what you see in the river.
+</p>
+
+<p>
+  To rename a session, press and hold its name and type a new one. The
+  <strong>×</strong> deletes it — <strong>immediately, with no confirmation.</strong>
+  JigRipper keeps up to fifty sessions and will not throw away an old one to make
+  room for a new one; if you reach the limit it says so, and you delete one yourself.
+</p>
+
+<h3>Tunes — your saved collection</h3>
+
+<p>
+  The <strong>tunes</strong> list holds everything you have saved with the
+  <strong>◇</strong> button on a sheet. That button is the only way in.
+</p>
+
+<p>
+  Tap a tune in the list to open its music. Sort the list by
+  <strong>recent</strong>, <strong>name</strong>, <strong>type</strong> or
+  <strong>key</strong>. The <strong>×</strong> removes a tune, as does tapping
+  the filled <strong>◆</strong> on its sheet.
+</p>
+
+<h3>Sets</h3>
+
+<p>
+  A set is a few tunes you play back to back. JigRipper lets you write them down
+  so you remember the order. It does not play them.
+</p>
+
+<dl class="controls">
+  <dt>+ New set</dt>
+  <dd>Starts an empty set. Use <strong>+ Add tune</strong> to search for tunes, or pick from your saved ones.</dd>
+  <dt>From river</dt>
+  <dd>Builds a set out of what you just played. The panel closes and a small bar
+      appears reading <strong>BUILDING SET</strong>. Tap tunes in the river to add
+      them, in order, then press <strong>save set</strong>.</dd>
+</dl>
+
+<p>
+  In a set you can rename it, reorder tunes with <strong>▲</strong> and
+  <strong>▼</strong>, and remove one with <strong>×</strong>. Tapping a tune in a
+  set opens its sheet music. Deleting a set is immediate and cannot be undone.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="upload">Listening to a recording</h2>
+
+<p>
+  The <strong>upload</strong> button hands JigRipper an audio file instead of the
+  microphone — a recording of a session, a track from an album, a voice memo. It
+  accepts the usual formats (MP3, M4A, WAV, FLAC and others) up to twenty minutes long.
+</p>
+
+<p>
+  It takes longer than live listening, and shows its progress. When it finishes
+  you get <strong>Deep listen complete</strong> and a list of the strongest
+  candidates grouped by tune type, each one a link to thesession.org so you can
+  check it against the real thing. <strong>View river</strong> puts the results
+  into the river.
+</p>
+
+<p>Starting an upload stops live listening first.</p>
+
+<aside class="hint">
+  <span class="hint-label">Getting a good result</span>
+  <p>
+    <b>Send the file, not the sound.</b> If you have the recording, upload it
+    rather than playing it out of a speaker for the microphone. A file keeps its
+    left and right channels, and JigRipper listens to each separately — a tune
+    buried in the mix often stands out clearly in one channel. A speaker
+    collapses all of that into one signal before the microphone ever hears it.
+  </p>
+</aside>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="settings">Settings worth knowing</h2>
+
+<p>
+  Open settings with the gear button at the end of the search bar — it reads
+  <strong>⚙︎ settings</strong> when there is room, and just <strong>⚙︎</strong> on
+  a narrow screen. Most of what is in there is best left alone; these are the
+  ones worth a look.
+</p>
+
+<dl class="controls">
+  <dt>High-contrast mode</dt>
+  <dd>Brighter, bolder and larger text throughout the app. Under <strong>Display</strong>.</dd>
+  <dt>Staff</dt>
+  <dd>Treble, bass, alto or tenor clef for all the sheet music. The non-treble
+      clefs shift the octave so the notes stay on the staff. Under <strong>Sheet music</strong>.</dd>
+  <dt>Microphone</dt>
+  <dd>Which microphone to listen through, if you have more than one — a clip-on
+      mic or a USB interface will hear far better than a phone across the room.
+      Under <strong>Input</strong>.</dd>
+  <dt>Temperament</dt>
+  <dd>For the tuner. Equal temperament by default; just intonation reads zero
+      cents on pure intervals above a root you choose. Under <strong>Tuner</strong>.</dd>
+  <dt>Noise suppression</dt>
+  <dd>On by default. Stops JigRipper hearing a tune in an air conditioner. Leave it on.</dd>
+  <dt>Instrument presence</dt>
+  <dd>On by default. Shows which instruments it thinks it can hear while you play.</dd>
+</dl>
+
+<p>
+  The rest of the <strong>Audio engine</strong> section is the listening
+  machinery itself. It ships set the way it works best. If you change something
+  and things get worse, the hint under each switch tells you what the default was.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<h2 id="trouble">When it goes wrong</h2>
+
+<h3>It is not hearing me</h3>
+
+<p>First, the microphone. JigRipper will tell you if it cannot get one:</p>
+
+<ul>
+  <li><strong>“Microphone access is blocked”</strong> — your browser or phone is
+      refusing. Allow the microphone in its settings, then tap the ring again.</li>
+  <li><strong>“No microphone found”</strong> — there is no input device at all.</li>
+</ul>
+
+<p>
+  If the status says <strong>silence</strong>, it is not getting enough level.
+  Move closer, or pick a different microphone in settings. If it says
+  <strong>noise</strong>, it can hear sound but has decided it is not music yet.
+</p>
+
+<aside class="hint">
+  <span class="hint-label">About background noise</span>
+  <p>
+    <b>A fan is fine. A room full of talk is harder.</b> JigRipper has a trained
+    ear for steady machine noise — air conditioning, fans, hum — and deliberately
+    ignores it, while still listening for an instrument playing over the top of
+    it. What defeats it is noise that is as loud and as musical as you are: a
+    crowded room, a television, another instrument close by playing something else.
+  </p>
+</aside>
+
+<h3>It is showing the wrong tune</h3>
+
+<p>
+  It happens. There are over twenty thousand tunes in the collection and a great
+  many of them share phrases. Things that help:
+</p>
+
+<ul>
+  <li><strong>Keep playing.</strong> It reconsiders continuously, and the river
+      corrects itself behind you for about ten minutes.</li>
+  <li><strong>Play a different part.</strong> If the A part is a common one, the
+      B part may settle it.</li>
+  <li><strong>Get the microphone closer</strong> to the instrument.</li>
+  <li><strong>Check the alternatives.</strong> If a name looks wrong, search for
+      the tune you believe it is and compare the music side by side. The
+      <strong>↗</strong> button opens thesession.org, which is the source of the notation.</li>
+</ul>
+
+<p>
+  Playing a recording out loud for JigRipper to hear is the hardest case of all,
+  and the least reliable. Upload the file instead if you have it.
+</p>
+
+<h3>It is showing the wrong key</h3>
+
+<aside class="hint">
+  <span class="hint-label">Usually not an error</span>
+  <p>
+    <b>Relative keys share every note.</b> A tune shown in A major instead of
+    F♯ minor — or G instead of E minor — has the same key signature and the same
+    notes on the page. Nothing you read is different. Tunes are filed under
+    either name in the archive, and choosing between them changes only the label.
+  </p>
+</aside>
+
+<p>
+  A genuinely wrong key — D shown where you played G — is a different matter, and
+  worth checking. Use the key buttons above the sheet to look at the settings in
+  the key you actually played.
+</p>
+
+<h3>The music on screen keeps changing</h3>
+
+<p>
+  That is the sheet following what it hears. Tap the clasp at the top left, or
+  long press the music, to hold it still.
+</p>
+
+</main>
+
+<a class="backlink" href="https://www.jigripper.com/">← Back to jigripper.com</a>
+
+<footer class="colophon">
+  <p>
+    Tune data from <a href="https://thesession.org">The Session</a>, used under the
+    <a href="https://opendatacommons.org/licenses/odbl/1-0/">Open Database License (ODbL) v1.0</a>.
+  </p>
+  <p>
+    <a href="../privacy.html">Privacy</a> ·
+    <a href="../support.html">Support</a> ·
+    <a href="https://seisionnach.com">Séisionnach LLC</a>
+  </p>
+</footer>
+
+</div>
+
+</body>
+</html>

@@ -1,0 +1,27 @@
+{
+  "model_type": "fragment",
+  "n_classes": 28494,
+  "n_tunes": 22410,
+  "d_model": 768,
+  "num_layers": 9,
+  "input_dim": 12,
+  "input_frames": 344,
+  "pool_mode": "fold12",
+  "key_canon": true,
+  "checkpoint": "pipeline\\output\\run_hcqt-fold12-T5-FragClf-KCanon-fullcorpus-round10-grandcombo-d768-L9-spe400k_v1\\swa_ep115_export_merged.pt",
+  "exported_from_run": "run_hcqt-fold12-T5-FragClf-KCanon-fullcorpus-round10-grandcombo-d768-L9-spe400k_v1",
+  "checkpoint_epoch": 115,
+  "job_id": 1006,
+  "display_id": "#1006",
+  "aliases": [
+    "#1006",
+    "model 1006",
+    "1006",
+    "fullcorpus-round10-swa115",
+    "recomb2 flagship"
+  ],
+  "predecessor": "keycanon-fullcorpus-362-r1-60",
+  "is_best_tune_identifier": false,
+  "doc": "README.md",
+  "description": "Round-2 recombinant flagship (job 879): 362 recipe + 23,227 setting-recombinant variants at empirical deployment tempos. Same I/O contract as #362; n_classes 28491 -> 28494. Read README.md before integrating."
+}

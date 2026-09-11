@@ -1,0 +1,117 @@
+{
+ "input": {
+  "name": "fold12",
+  "shape": [
+   "batch",
+   12,
+   "frames"
+  ],
+  "dtype": "float32",
+  "frames_in_client": 344,
+  "source": "the same Rust preprocess_hcqt_window(..., 'fold12') tensor the retrieval backbone consumes",
+  "bin0_pitch_class": "G (MIDI pc 7). chroma_index = (midi_pc - 7) mod 12 \u2014 the same G-based fold12 frame your worker captures pre-KeyCanon. Do NOT rotate before the call.",
+  "drone_subtraction": "MUST NOT be applied. Trained on plain fold12 (Rust pool_mode fold12, no per-bin floor subtraction). Capture BEFORE your stationary-drone floor subtraction \u2014 that step removes sustained tonic energy, the most informative feature for this task, and feeding subtracted input is an out-of-distribution error that degrades silently.",
+  "keycanon": "MUST NOT be applied (pre-KeyCanon tensor)."
+ },
+ "output": {
+  "name": "tonic_logits",
+  "shape": [
+   "batch",
+   12
+  ],
+  "dtype": "float32",
+  "index_meaning": "MIDI pitch class, 0 = C (the export folds the G-frame rotation into the graph; consumer does no rotation on either side)",
+  "names": [
+   "C",
+   "C#",
+   "D",
+   "D#",
+   "E",
+   "F",
+   "F#",
+   "G",
+   "G#",
+   "A",
+   "A#",
+   "B"
+  ]
+ },
+ "key_canon": false,
+ "client_rotation_required": false,
+ "reachable_classes": [
+  0,
+  2,
+  4,
+  5,
+  7,
+  9,
+  11
+ ],
+ "reachable_note_names": [
+  "C",
+  "D",
+  "E",
+  "F",
+  "G",
+  "A",
+  "B"
+ ],
+ "params": 776033,
+ "size_mb": 3.12,
+ "checkpoint": "best_tonic_sidecar.pt",
+ "trained_epoch": 80,
+ "heldout_acc": 0.7646912336349487,
+ "heldout_marginal": 0.3229581673306773,
+ "key_prior": null,
+ "train_config": {
+  "arch": "TonicSidecar",
+  "width": 1.0,
+  "params": 776033,
+  "dropout": 0.1,
+  "input": "fold12 (12,344)",
+  "output": "absolute tonic pc (12)",
+  "key_canon": false,
+  "hcqt_dat": "pipeline\\output\\fullcorpus_round5_guided.dat",
+  "meta_npz": "pipeline\\output\\fullcorpus_round5_guided_meta_synthonly.npz",
+  "n_meta_rows": 146225,
+  "tonic_labels": "pipeline/output/tonic_labels_fullcorpus_round5.npz",
+  "heldout_frac": 0.2,
+  "heldout_salt": "tonic-sidecar-v1",
+  "heldout_settings": 29404,
+  "batch_size": 128,
+  "lr": 0.003,
+  "samples_per_epoch": 38400,
+  "label_smoothing": 0.05,
+  "balance_pow": 0.5,
+  "focal_gamma": 1.5,
+  "train_prior": [
+   0.28495,
+   0.0,
+   0.19666,
+   0.0,
+   0.04826,
+   0.03113,
+   0.0,
+   0.31199,
+   0.0,
+   0.10452,
+   0.0225,
+   0.0
+  ],
+  "seed": 42,
+  "device": "cuda"
+ },
+ "metric_caveat": "within-a-fifth (80%) would NOT detect a constant fifth offset from a bin-origin mismatch; validate absolute agreement on a known-key clip first (e.g. a clip your KeyCanon+melodicFit pipeline is confident about).",
+ "version": "v2-fullcorpus-ep80",
+ "training": "round-5 fullcorpus shard, balance_pow=0.5 focal_gamma=1.5; held-out 76.5% vs 32.3% marginal; B-key 66% (v1: 24%)",
+ "real_audio_73": {
+  "sidecar_vs_archive_modal": "48/73 (66%)",
+  "sidecar_in_archive_key_set": "63/73 (86%)",
+  "krumhansl_reference": "37/73 modal, 52/73 in-set \u2014 sidecar beats the neural-free reference on all axes",
+  "offset_histogram": "peaks at 0 with 7/5 (dominant/subdominant) tail \u2014 no frame-origin pathology"
+ },
+ "sha256": {
+  "tonic_sidecar.onnx": "f4cdf4661287c0f00fee57cd3b4bcf9818d7c05cd88e22426b679fc2fd73eaa5",
+  "tonic_sidecar_fp16.onnx": "03aa96dc7e917da3fdd52e627a5f98d0578cdfbd07aa26f649f4ffb79d8596a1"
+ }
+}
