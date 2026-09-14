@@ -378,8 +378,9 @@ footer.colophon p { margin-bottom: var(--f2); }
       listening, identifying, or settled on a tune.</li>
   <li><strong>The listen ring.</strong> Tap it to start and stop listening.
       This is the control everything else follows from.</li>
-  <li><strong>The live edge of the river.</strong> Newly identified tunes appear
-      at the <strong>right-hand</strong> edge.</li>
+  <li><strong>The live edge of the river.</strong> The river is the strip of dots
+      along the bottom, where each tune you play is written down as you play it.
+      Newly identified tunes appear at its <strong>right-hand</strong> edge.</li>
   <li><strong>Earlier tunes lie to the left.</strong> As the session goes on, the
       river carries what you played away to the left. Scroll left to go back
       through the evening.</li>
@@ -516,7 +517,8 @@ footer.colophon p { margin-bottom: var(--f2); }
 <h3>Tapping a band</h3>
 
 <p>
-  Tap any band to open that tune's sheet music, in the key you played it in. Tap
+  Tap any band to open that tune's sheet music, in the key you played it in. The
+  sheet then holds on that tune instead of following what JigRipper hears; tap
   the same band again to let go of it.
 </p>
 
@@ -534,11 +536,18 @@ footer.colophon p { margin-bottom: var(--f2); }
        alt="A full screen of engraved sheet music. At the top left a close button and a small leaf-shaped clasp; in the centre the title Banish Misfortune with Jig, D Mixolydian and 6/8 beneath it; at the top right four round buttons. Below, a row of key buttons reading All, D Ionian, D Mixolydian and E Mixolydian, then arrows either side of 1/15. Nine staves of music in 6/8 follow.">
   <figcaption>
     A tune in full screen. The <strong>×</strong> at the top left closes it; the
-    leaf beside it is the clasp.
+    leaf beside it is the <strong>clasp</strong>, which decides whether the music
+    keeps following what JigRipper hears or stays where it is.
   </figcaption>
 </figure>
 
 <h3>Keys and settings</h3>
+
+<p>
+  Most tunes have been written down many times, in slightly different versions.
+  Each one is a <strong>setting</strong>. <strong>1/11</strong> means you are
+  looking at the first of eleven, and the arrows either side step through them.
+</p>
 
 <figure class="wide">
   <img src="img/sheet-keys-settings.png" width="1736" height="84"
@@ -547,15 +556,26 @@ footer.colophon p { margin-bottom: var(--f2); }
 </figure>
 
 <p>
-  Most tunes have been written down many times, in slightly different versions.
-  Each one is a <strong>setting</strong>. <strong>1/11</strong> means you are
-  looking at the first of eleven, and the arrows either side step through them.
-</p>
-
-<p>
   The buttons to the left filter by key. <strong>All</strong> shows every
   setting; picking a key narrows the list to settings written in it.
 </p>
+
+<h3 id="sheet-page">Dark or paper</h3>
+
+<p>
+  The music is drawn light-on-dark to match the rest of the app. If you find
+  black notes on a pale page easier to read — in daylight, or just by habit —
+  switch to <strong>Paper</strong>: settings, <strong>Sheet music</strong>,
+  <strong>Page</strong>. Only the notation changes; the title, the key buttons
+  and the rest of the app stay dark. The choice applies to the small sheet and
+  full screen alike, and is remembered.
+</p>
+
+<figure class="wide">
+  <img src="img/sheet-paper.jpg" width="1760" height="1300"
+       alt="The sheet music panel with Banish Misfortune. The title, action buttons and key filter are on the dark background as before, but the staves below are black notes on a pale cream page.">
+  <figcaption>The same sheet with <strong>Page</strong> set to Paper.</figcaption>
+</figure>
 
 <h3>The buttons</h3>
 
@@ -703,7 +723,8 @@ footer.colophon p { margin-bottom: var(--f2); }
 
 <ul>
   <li>the session name, how long it ran, and how many tunes;</li>
-  <li>the tunes grouped into sets, with the time each set started;</li>
+  <li>the tunes grouped into sets — runs played back to back — with the time each
+      set started;</li>
   <li>a thesession.org link under every tune.</li>
 </ul>
 
@@ -802,10 +823,14 @@ footer.colophon p { margin-bottom: var(--f2); }
   <dt>Staff</dt>
   <dd>Treble, bass, alto or tenor clef for all the sheet music. The non-treble
       clefs shift the octave so the notes stay on the staff. Under <strong>Sheet music</strong>.</dd>
+  <dt>Page</dt>
+  <dd>Dark or Paper for the sheet music — light notes on the app's dark
+      background, or black notes on a pale page. Under <strong>Sheet music</strong>;
+      see <a href="#sheet-page">Dark or paper</a>.</dd>
   <dt>Microphone</dt>
   <dd>Which microphone to listen through, if you have more than one — a clip-on
       mic or a USB interface will hear far better than a phone across the room.
-      Under <strong>Input</strong>.</dd>
+      Under <strong>Input</strong>; see <a href="#input">Choosing a microphone</a>.</dd>
   <dt>Temperament</dt>
   <dd>For the tuner. Equal temperament by default; just intonation reads zero
       cents on pure intervals above a root you choose. Under <strong>Tuner</strong>.</dd>
@@ -819,6 +844,49 @@ footer.colophon p { margin-bottom: var(--f2); }
   The rest of the <strong>Audio engine</strong> section is the listening
   machinery itself. It ships set the way it works best. If you change something
   and things get worse, the hint under each switch tells you what the default was.
+</p>
+
+<h3 id="input">Choosing a microphone</h3>
+
+<p>
+  Under <strong>Input</strong> is a list of every microphone the device can
+  see: the built-in one, anything plugged in, and on a computer whatever the
+  browser has been allowed to use. <strong>System default</strong> means
+  whatever the phone or browser would use on its own, which is right for most
+  people. Pick a specific one when there is a better one to be had:
+</p>
+
+<ul>
+  <li>A <strong>USB audio interface</strong> with a proper microphone hears a
+      session far better than a phone lying on the table. Plug it in before
+      opening settings so it appears in the list.</li>
+  <li>A <strong>clip-on or lapel mic</strong> on your instrument keeps you
+      louder than the room, which is most of what identification needs.</li>
+  <li><strong>Bluetooth headsets</strong> are the exception — their microphones
+      are made for speech and will muffle an instrument. Leave those on the
+      built-in mic.</li>
+</ul>
+
+<p>
+  On a phone or tablet the change takes effect straight away, even while it is
+  listening. In a browser it applies the next time you tap the ring, so stop
+  and start if you switch mid-session. The browser only shows microphone names
+  once you have allowed it to listen at least once; before that the list reads
+  <em>Microphone 1</em>, <em>Microphone 2</em> and so on.
+</p>
+
+<p>
+  An interface with several inputs needs nothing special. JigRipper listens to
+  all of its channels and uses the ones that are actually carrying sound, so a
+  single mic on input 1 of an eight-channel box comes through at full level and
+  the empty inputs do not drag it down.
+</p>
+
+<p>
+  If the microphone you chose is unplugged, it stays in the list by name, marked
+  <strong>not connected</strong>, and JigRipper listens through the system
+  default until it comes back — plugging it in again picks it up without
+  changing the setting. Choose any other input to forget it.
 </p>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
@@ -836,7 +904,8 @@ footer.colophon p { margin-bottom: var(--f2); }
 
 <p>
   If the status says <strong>silence</strong>, it is not getting enough level.
-  Move closer, or pick a different microphone in settings. If it says
+  Move closer, or pick a different microphone in settings (see
+  <a href="#input">Choosing a microphone</a>). If it says
   <strong>noise</strong>, it can hear sound but has decided it is not music yet.
 </p>
 
