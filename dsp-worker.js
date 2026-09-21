@@ -1,1445 +1,832 @@
-/**
- * DSP + Inference Web Worker — Tonnléas
+/* Model the tune model DSP + inference Web Worker.
  *
- * Self-contained DSP pipeline AND ONNX inference running off the main thread.
- * The main thread is completely free for animations, audio capture, and UI.
+ * Lives entirely off the main thread:
+ *   1. WASM HCQT-fold12 front-end (hcqt_fold12.js — single-source-of-truth C
+ *      compiled to wasm-simd128). Resampling included in WASM.
+ *   2. onnxruntime-web in this same worker runs model_nokeycanon_fp16.onnx
+ *      (362-lr768 FP16, factored low-rank head — 131 MB, R1=58/73).
+ *      FP16 is the canonical default; INT8 QDQ (63 MB, R1=60/73) is
+ *      reachable via `?model362=int8` for compression-campaign
+ *      experimentation but currently produces sustained confident
+ *      wrong commits on real session audio (e.g. classifying Blarney
+ *      Pilgrim as four different tunes over 90 s), so it's not ready
+ *      to be the user-facing default. The upstream challenger-streak
+ *      gate, Markov stale-lock decay, sheet-latch margin gate, river
+ *      committed-tune source, and Foote merge-guard all stay — they
+ *      help FP16 too and they're load-bearing for any future INT8
+ *      re-enablement. ORT-Web 1.18 is pinned for iOS WebKit; 1.19+
+ *      needs SharedArrayBuffer that Safari withholds. The .wasm
+ *      execution provider keeps ONNX off the main thread.
+ *   3. KeyCanon rotation applied to each (12, 344) window in-place before
+ *      inference (banker's round, bit-exact port of keycanon_reference.py).
+ *   4. Per-window softmax → mean across windows → per-tune MAX over class
+ *      indices via label_map → canonical-redirect.
  *
- * Protocol:
- *   Receives: { type: 'init', chromaFB: ArrayBuffer, baseUrl: string, modelUrl: string }
- *             { type: 'process', id: number, samples: ArrayBuffer, cycle: number }
- *   Sends:    { type: 'ready' }
- *             { type: 'model-loaded' }
- *             { type: 'model-error', error: string }
- *             { type: 'result', id, chroma, rawEnergy, nFrames, ensembleAvg, nClasses, tempo }
+ * Audio in is buffered: the worker keeps a rolling buffer of up to
+ * MAX_BUF_SEC seconds of native-rate samples. Each 'process' call appends
+ * a new chunk and re-runs the pipeline over the current buffer (the same
+ * trade-off the dashboard's IncrementalHcqtCache uses — small accuracy
+ * hit at the trailing edge for sub-realtime latency). No JS in the audio
+ * path; resampling, HPSS, CQT, consensus, fold12 all happen inside WASM.
+ *
+ * Message protocol (all messages from main → worker):
+ *   { type: 'init',    baseUrl: string, assetsBase: string, inputSr: number }
+ *     baseUrl     — origin (or '') under which hcqt_fold12.js + ort.min.js live.
+ *     assetsBase  — origin under which model_nokeycanon_fp16.onnx + json catalogs live.
+ *     inputSr     — capture sample rate (e.g. 44100). Hot-path values pre-sized for this.
+ *   { type: 'process', samples: ArrayBuffer<Float32>, replaceBuffer?: bool }
+ *     replaceBuffer true → discard rolling buffer, start fresh.
+ *   { type: 'reset' }   — clear rolling buffer.
+ *
+ * Messages back (worker → main):
+ *   { type: 'ready' }                              once everything's loaded
+ *   { type: 'init-error', error }
+ *   { type: 'result', topK, winMaxCos, winTopCos, dspMs, infMs, nWindows, bufferSec }
+ *   { type: 'process-error', error }
  */
 
-// ══════════════════════════════════════════════════════════
-// Constants (must match src/constants.ts)
-// ══════════════════════════════════════════════════════════
-var SAMPLE_RATE = 22050;
-var N_FFT = 2048;
-var HOP_LENGTH = 512;
-var N_CHROMA = 12;
-var WINDOW_FRAMES = 344;
-var HOP_FRAMES = 86;
-var SOFTMAX_TEMP = 0.15;
-var MEDIAN_WIDTH = 9;
-var PEAK_THRESHOLD = 0.15;
-var HPSS_KERNEL = 31;
-var MELODY_FREQ_LO = 250;
-var MELODY_FREQ_HI = 3500;
-var DRONE_WINDOW = 172;
+'use strict';
 
-// Ensemble weights
-var WEIGHT_STD = 0.50;
-var WEIGHT_FG = 0.20;
-var WEIGHT_MEL = 0.30;
-var WEIGHT_STD_2WAY = 0.50;
-var WEIGHT_MEL_2WAY = 0.50;
+const MAX_BUF_SEC = 8;                 // rolling buffer cap (native SR)
+const TARGET_SR = 22050;
+const N_CHROMA = 12;
+const WINDOW_FRAMES = 344;
+const TENSOR_SIZE = N_CHROMA * WINDOW_FRAMES;  // 4128 floats / window
+const MAX_WINDOWS = 64;                // 8 s / 0.5 s/window stride at 50% overlap
+const TOP_K = 25;   // deep top-K: the analyze-recording aggregator ranks candidates across
+                    // hundreds of windows and needs depth (rank 6-25 carries real signal on hard
+                    // tracks — Galway finding); live path reads only topK[0], cost is negligible.
+const TWO_PI = 2 * Math.PI;
 
-// ══════════════════════════════════════════════════════════
-// FFT — Radix-2 Cooley-Tukey with pre-computed twiddle factors
-// ══════════════════════════════════════════════════════════
-var NUM_STAGES = Math.log2(N_FFT); // 11 for N=2048
-var twiddleRe = new Array(NUM_STAGES);
-var twiddleIm = new Array(NUM_STAGES);
+let _baseUrl = '';
+let _assetsBase = '';
+let _inputSr = 0;
+let _wasm = null;
+let _ort = null;
+let _session = null;
+let _inputName = null;
+let _outputName = null;
+let _labelMap = null;
+let _tuneIndex = null;
+let _redirects = null;
 
-for (var s = 0; s < NUM_STAGES; s++) {
-  var len = 1 << (s + 1);
-  var half = len >> 1;
-  twiddleRe[s] = new Float64Array(half);
-  twiddleIm[s] = new Float64Array(half);
-  var angle = -2 * Math.PI / len;
-  for (var j = 0; j < half; j++) {
-    twiddleRe[s][j] = Math.cos(angle * j);
-    twiddleIm[s][j] = Math.sin(angle * j);
-  }
-}
+/* Pre-allocated WASM heap pointers (reused across cycles, freed only on reset). */
+let _nativeBufPtr = 0;
+let _nativeBufCap = 0;
+let _resampledPtr = 0;
+let _resampledCap = 0;
+let _tensorsPtr = 0;
+let _tensorsBytes = MAX_WINDOWS * TENSOR_SIZE * 4;
 
-function fft(re, im) {
-  var n = re.length;
-  // Bit-reversal permutation
-  for (var i = 1, j = 0; i < n; i++) {
-    var bit = n >> 1;
-    while (j & bit) { j ^= bit; bit >>= 1; }
-    j ^= bit;
-    if (i < j) {
-      var tmp = re[i]; re[i] = re[j]; re[j] = tmp;
-      tmp = im[i]; im[i] = im[j]; im[j] = tmp;
+/* Rolling buffer of native-SR audio (Float32). Lives on the JS heap; we
+ * memcpy it into the WASM heap each cycle. Avoids any per-cycle malloc
+ * in WASM. */
+let _ring = null;
+let _ringLen = 0;
+
+function ensureRing() {
+    const cap = MAX_BUF_SEC * _inputSr;
+    if (!_ring || _ring.length !== cap) {
+        _ring = new Float32Array(cap);
+        _ringLen = 0;
     }
-  }
-  // Butterfly stages
-  for (var s = 0; s < NUM_STAGES; s++) {
-    var len = 1 << (s + 1);
-    var half = len >> 1;
-    var twRe = twiddleRe[s];
-    var twIm = twiddleIm[s];
-    for (var i = 0; i < n; i += len) {
-      for (var j = 0; j < half; j++) {
-        var k = i + j + half;
-        var ij = i + j;
-        var cRe = twRe[j];
-        var cIm = twIm[j];
-        var tRe = cRe * re[k] - cIm * im[k];
-        var tIm = cRe * im[k] + cIm * re[k];
-        re[k] = re[ij] - tRe;
-        im[k] = im[ij] - tIm;
-        re[ij] += tRe;
-        im[ij] += tIm;
-      }
+}
+
+function appendSamples(samples) {
+    ensureRing();
+    const cap = _ring.length;
+    const incoming = samples.length;
+    if (incoming >= cap) {
+        // Take the most recent `cap` samples and replace the ring entirely.
+        _ring.set(samples.subarray(incoming - cap));
+        _ringLen = cap;
+        return;
     }
-  }
-}
-
-// ══════════════════════════════════════════════════════════
-// STFT — Synchronous (no yields, no cancellation)
-// ══════════════════════════════════════════════════════════
-var hannWindow = null;
-var PAD = N_FFT >> 1;
-var _paddedBuf = null;
-var _reBuf = null;
-var _imBuf = null;
-
-function initHannWindow() {
-  hannWindow = new Float32Array(N_FFT);
-  for (var i = 0; i < N_FFT; i++) {
-    hannWindow[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / N_FFT));
-  }
-}
-
-function computeSTFT(samples) {
-  if (!hannWindow) initHannWindow();
-  var n = samples.length;
-  var nBins = (N_FFT >> 1) + 1;
-  var paddedLen = n + 2 * PAD;
-
-  if (!_paddedBuf || _paddedBuf.length < paddedLen) {
-    _paddedBuf = new Float32Array(paddedLen);
-  }
-  var padded = _paddedBuf;
-  padded.fill(0, 0, PAD);
-  padded.set(samples, PAD);
-  padded.fill(0, PAD + n, paddedLen);
-
-  var nFrames = Math.floor((paddedLen - N_FFT) / HOP_LENGTH) + 1;
-  if (nFrames <= 0) return null;
-
-  var mag = new Float32Array(nBins * nFrames);
-
-  if (!_reBuf || _reBuf.length < N_FFT) {
-    _reBuf = new Float32Array(N_FFT);
-    _imBuf = new Float32Array(N_FFT);
-  }
-  var re = _reBuf;
-  var im = _imBuf;
-  var hw = hannWindow;
-
-  for (var f = 0; f < nFrames; f++) {
-    var offset = f * HOP_LENGTH;
-    for (var i = 0; i < N_FFT; i++) {
-      re[i] = padded[offset + i] * hw[i];
+    if (_ringLen + incoming <= cap) {
+        _ring.set(samples, _ringLen);
+        _ringLen += incoming;
+        return;
     }
-    im.fill(0, 0, N_FFT);
-    fft(re, im);
-    for (var b = 0; b < nBins; b++) {
-      mag[b * nFrames + f] = re[b] * re[b] + im[b] * im[b];
+    // Shift older samples to make room.
+    const keep = cap - incoming;
+    _ring.copyWithin(0, _ringLen - keep, _ringLen);
+    _ring.set(samples, keep);
+    _ringLen = cap;
+}
+
+/* ── KeyCanon (bit-exact port of keycanon_reference.py / scripts/hcqt-ref/keycanon.js) ── */
+
+function bankerRound(x) {
+    const f = Math.floor(x);
+    const d = x - f;
+    if (d < 0.5) return f;
+    if (d > 0.5) return f + 1;
+    return (f & 1) === 0 ? f : f + 1;
+}
+
+function phaseMag(C, T, m) {
+    let re = 0, im = 0;
+    for (let k = 0; k < 12; k++) {
+        const c = Math.cos(-TWO_PI * m * k / 12);
+        const s = Math.sin(-TWO_PI * m * k / 12);
+        const base = k * T;
+        let rowSum = 0;
+        for (let t = 0; t < T; t++) rowSum += C[base + t];
+        re += c * rowSum;
+        im += s * rowSum;
     }
-  }
-
-  return { mag: mag, nFrames: nFrames, nBins: nBins };
+    return { phi: Math.atan2(im, re), mag: Math.sqrt(re * re + im * im + 1e-8) };
 }
 
-// ══════════════════════════════════════════════════════════
-// HPSS — Synchronous (no async, no yields)
-// ══════════════════════════════════════════════════════════
-function quickselect(buf, left, right, k) {
-  while (left < right) {
-    var mid = (left + right) >> 1;
-    if (buf[mid] < buf[left]) { var t = buf[left]; buf[left] = buf[mid]; buf[mid] = t; }
-    if (buf[right] < buf[left]) { var t = buf[left]; buf[left] = buf[right]; buf[right] = t; }
-    if (buf[right] < buf[mid]) { var t = buf[mid]; buf[mid] = buf[right]; buf[right] = t; }
-    var pivot = buf[mid];
-    var i = left;
-    var j = right;
-    while (true) {
-      while (buf[i] < pivot) i++;
-      while (buf[j] > pivot) j--;
-      if (i >= j) break;
-      var tmp = buf[i]; buf[i] = buf[j]; buf[j] = tmp;
-      i++;
-      j--;
+function applyKeycanonInPlace(C, T) {
+    const m1 = phaseMag(C, T, 1);
+    const phiEff = m1.mag > 1e-4 ? m1.phi : phaseMag(C, T, 5).phi / 5;
+    const kCanon = bankerRound(-phiEff * (12 / TWO_PI));
+    const shift = (((kCanon % 12) + 12) % 12);
+    if (shift === 0) return;
+    const tmp = new Float32Array(C.length);
+    for (let k = 0; k < 12; k++) {
+        const src = ((k + shift) % 12) * T;
+        const dst = k * T;
+        for (let t = 0; t < T; t++) tmp[dst + t] = C[src + t];
     }
-    if (j < k) left = j + 1;
-    else right = j;
-  }
-  return buf[k];
+    C.set(tmp);
 }
 
-var _medianBuf = new Float32Array(HPSS_KERNEL);
-
-function median1d(arr, len, kernel, out) {
-  var half = kernel >> 1;
-  if (_medianBuf.length < kernel + 1) _medianBuf = new Float32Array(kernel + 1);
-  var buf = _medianBuf;
-  for (var i = 0; i < len; i++) {
-    var start = Math.max(0, i - half);
-    var end = Math.min(len - 1, i + half);
-    var count = end - start + 1;
-    for (var j = 0; j < count; j++) buf[j] = arr[start + j];
-    var medianIdx = count >> 1;
-    out[i] = quickselect(buf, 0, count - 1, medianIdx);
-  }
-  return out;
-}
-
-function hpss(mag, nFrames, nBins) {
-  // Harmonic: median along time for each frequency bin
-  var harmonic = new Float32Array(nBins * nFrames);
-  var medOutH = new Float32Array(Math.max(nFrames, nBins));
-  for (var b = 0; b < nBins; b++) {
-    var row = mag.subarray(b * nFrames, b * nFrames + nFrames);
-    median1d(row, nFrames, HPSS_KERNEL, medOutH);
-    harmonic.set(medOutH.subarray(0, nFrames), b * nFrames);
-  }
-
-  // Percussive: median along frequency for each time frame
-  var percussive = new Float32Array(nBins * nFrames);
-  var col = new Float32Array(nBins);
-  var medOutP = new Float32Array(nBins);
-  for (var f = 0; f < nFrames; f++) {
-    for (var b = 0; b < nBins; b++) col[b] = mag[b * nFrames + f];
-    median1d(col, nBins, HPSS_KERNEL, medOutP);
-    for (var b = 0; b < nBins; b++) percussive[b * nFrames + f] = medOutP[b];
-  }
-
-  // Soft mask: H_mask = H^2 / (H^2 + P^2 + eps)
-  var harmonicMasked = new Float32Array(nBins * nFrames);
-  var eps = 1e-10;
-  for (var i = 0; i < harmonicMasked.length; i++) {
-    var h2 = harmonic[i] * harmonic[i];
-    var p2 = percussive[i] * percussive[i];
-    harmonicMasked[i] = mag[i] * h2 / (h2 + p2 + eps);
-  }
-  return harmonicMasked;
-}
-
-// ══════════════════════════════════════════════════════════
-// Normalize — medianFilter, peakNormalize, softmaxNormalize
-// ══════════════════════════════════════════════════════════
-var _mfOut = null;
-var _mfRow = null;
-var _mfMedOut = null;
-
-function medianFilter(chroma, nFrames) {
-  var len = chroma.length;
-  if (!_mfOut || _mfOut.length < len) _mfOut = new Float32Array(len);
-  if (!_mfRow || _mfRow.length < nFrames) _mfRow = new Float32Array(nFrames);
-  if (!_mfMedOut || _mfMedOut.length < nFrames) _mfMedOut = new Float32Array(nFrames);
-  var out = _mfOut;
-  var row = _mfRow;
-  var medOut = _mfMedOut;
-
-  for (var c = 0; c < N_CHROMA; c++) {
-    var base = c * nFrames;
-    for (var f = 0; f < nFrames; f++) row[f] = chroma[base + f];
-    median1d(row, nFrames, MEDIAN_WIDTH, medOut);
-    out.set(medOut.subarray(0, nFrames), base);
-  }
-  return new Float32Array(out.subarray(0, len));
-}
-
-function peakNormalize(chroma, nFrames) {
-  for (var f = 0; f < nFrames; f++) {
-    var max = 1e-10;
-    for (var c = 0; c < N_CHROMA; c++) {
-      var v = chroma[c * nFrames + f];
-      if (v > max) max = v;
-    }
-    for (var c = 0; c < N_CHROMA; c++) {
-      var idx = c * nFrames + f;
-      chroma[idx] /= max;
-      if (chroma[idx] < PEAK_THRESHOLD) chroma[idx] *= 0.1;
-    }
-  }
-}
-
-function softmaxNormalize(chroma, nFrames) {
-  var out = new Float32Array(chroma.length);
-  for (var f = 0; f < nFrames; f++) {
-    var max = -Infinity;
-    for (var c = 0; c < N_CHROMA; c++) {
-      var v = chroma[c * nFrames + f] / SOFTMAX_TEMP;
-      if (v > max) max = v;
-    }
-    var sum = 0;
-    for (var c = 0; c < N_CHROMA; c++) {
-      var idx = c * nFrames + f;
-      var e = Math.exp(chroma[idx] / SOFTMAX_TEMP - max);
-      out[idx] = e;
-      sum += e;
-    }
-    for (var c = 0; c < N_CHROMA; c++) {
-      out[c * nFrames + f] /= sum;
-    }
-  }
-  return out;
-}
-
-// ══════════════════════════════════════════════════════════
-// Chromagram — specToChroma, processStandard, removeDrone,
-//              processForeground, processMelodyOnly
-// ══════════════════════════════════════════════════════════
-var chromaFB = null;
-var chromaFB_melody = null;
-
-// Pre-allocated buffers for melody-only extraction
-var _melLongBuf = null;
-var _melDiffBuf = null;
-var _melOnsetBuf = null;
-var _melGateBuf = null;
-
-// Pre-allocated buffers for removeDrone
-var _droneRow = null;
-var _droneMedOut = null;
-
-function initFilterBanks(fb) {
-  chromaFB = fb;
-  var nBins = fb.length / N_CHROMA;
-  var minBin = Math.round(MELODY_FREQ_LO * N_FFT / SAMPLE_RATE);
-  var maxBin = Math.round(MELODY_FREQ_HI * N_FFT / SAMPLE_RATE);
-  chromaFB_melody = new Float32Array(fb.length);
-  for (var c = 0; c < N_CHROMA; c++) {
-    for (var b = minBin; b <= maxBin && b < nBins; b++) {
-      chromaFB_melody[c * nBins + b] = fb[c * nBins + b];
-    }
-  }
-}
-
-// ══════════════════════════════════════════════════════════
-// CQT Chromagram — matches librosa.feature.chroma_cqt
-// Uses Goertzel algorithm for efficient single-frequency DFT
-// ══════════════════════════════════════════════════════════
-
-var CQT_N_OCTAVES = 7;
-var CQT_BINS_PER_OCTAVE = 36;  // 3 per semitone, matching librosa chroma_cqt default
-var CQT_BINS = CQT_N_OCTAVES * CQT_BINS_PER_OCTAVE;  // 252 bins
-var CQT_FMIN = 32.7032;  // C1
-var CQT_Q = 1.0 / (Math.pow(2, 1.0 / CQT_BINS_PER_OCTAVE) - 1);  // Q for 36 bins/octave ≈ 51.9
-
-// Pre-compute CQT bin frequencies and window lengths
-var cqtFreqs = new Float64Array(CQT_BINS);
-var cqtWinLens = new Int32Array(CQT_BINS);
-
-for (var k = 0; k < CQT_BINS; k++) {
-  cqtFreqs[k] = CQT_FMIN * Math.pow(2, k / CQT_BINS_PER_OCTAVE);
-  cqtWinLens[k] = Math.ceil(CQT_Q * SAMPLE_RATE / cqtFreqs[k]);
-}
-
-// Pre-compute Hann windows for each CQT bin
-var cqtWindows = new Array(CQT_BINS);
-for (var k = 0; k < CQT_BINS; k++) {
-  var N = cqtWinLens[k];
-  cqtWindows[k] = new Float32Array(N);
-  for (var i = 0; i < N; i++) {
-    cqtWindows[k][i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / N));
-  }
-}
-
-/**
- * Compute CQT-based chromagram from raw audio samples.
- * Matches librosa.feature.chroma_cqt(y, sr=22050, hop_length=512, n_chroma=12).
- *
- * @param samples Float32Array of audio samples (mono, 22050 Hz)
- * @returns { chroma: Float32Array(12 * nFrames), nFrames: number }
- */
-// Pre-compute per-bin normalization: 2 / (N_k * sqrt(N_k))
-var cqtNormFactors = new Float64Array(CQT_BINS);
-for (var k = 0; k < CQT_BINS; k++) {
-  cqtNormFactors[k] = 2.0 / (cqtWinLens[k] * Math.sqrt(cqtWinLens[k]));
-}
-
-// Pre-compute sin/cos tables per CQT bin
-// Only for bins where N_k <= 4096 (higher freq bins with short windows).
-// For low-freq bins with very long windows, compute on the fly to save memory.
-var CQT_PRECOMPUTE_LIMIT = 4096;
-var cqtCosTable = new Array(CQT_BINS);
-var cqtSinTable = new Array(CQT_BINS);
-var cqtOmega = new Float64Array(CQT_BINS);
-for (var k = 0; k < CQT_BINS; k++) {
-  var N_k = cqtWinLens[k];
-  cqtOmega[k] = 2 * Math.PI * cqtFreqs[k] / SAMPLE_RATE;
-  if (N_k <= CQT_PRECOMPUTE_LIMIT) {
-    cqtCosTable[k] = new Float32Array(N_k);
-    cqtSinTable[k] = new Float32Array(N_k);
-    for (var i = 0; i < N_k; i++) {
-      var phase = cqtOmega[k] * i;
-      cqtCosTable[k][i] = Math.cos(phase);
-      cqtSinTable[k][i] = Math.sin(phase);
-    }
-  } else {
-    cqtCosTable[k] = null;
-    cqtSinTable[k] = null;
-  }
-}
-
-/**
- * Hybrid CQT: uses STFT projection for low-freq bins (long windows),
- * direct DFT for high-freq bins (short windows).
- *
- * For low-freq bins where N_k > N_FFT, we project the STFT onto the
- * CQT kernel in the frequency domain (O(nBins) per bin per frame).
- * For high-freq bins where N_k <= N_FFT, direct DFT is fast enough.
- *
- * This matches librosa's approach (STFT-based CQT) for speed.
- */
-
-// Pre-compute frequency-domain CQT kernels for low-freq bins
-// These project STFT bins onto CQT frequencies
-var cqtStftKernelRe = new Array(CQT_BINS);
-var cqtStftKernelIm = new Array(CQT_BINS);
-var cqtUseStft = new Uint8Array(CQT_BINS); // 1 = use STFT projection
-
-var nBinsStft = (N_FFT >> 1) + 1;
-for (var k = 0; k < CQT_BINS; k++) {
-  if (cqtWinLens[k] > N_FFT) {
-    // Low-freq bin: use STFT projection
-    // Build the kernel in frequency domain: FFT of the windowed exponential
-    // For a bin at frequency f_k, the STFT bin nearest to f_k gets most energy
-    cqtUseStft[k] = 1;
-
-    // Simple approach: weighted sum of nearby STFT bins
-    // The CQT frequency f_k maps to STFT bin f_k * N_FFT / SR
-    var stftBin = cqtFreqs[k] * N_FFT / SAMPLE_RATE;
-    var bLow = Math.max(0, Math.floor(stftBin) - 2);
-    var bHigh = Math.min(nBinsStft - 1, Math.ceil(stftBin) + 2);
-
-    cqtStftKernelRe[k] = new Float32Array(nBinsStft);
-    cqtStftKernelIm[k] = null; // magnitude-only projection
-
-    // Triangular window centered on the CQT frequency
-    for (var b = bLow; b <= bHigh; b++) {
-      var bFreq = b * SAMPLE_RATE / N_FFT;
-      var dist = Math.abs(bFreq - cqtFreqs[k]) / (cqtFreqs[k] / (CQT_Q * 0.5));
-      if (dist < 1) {
-        cqtStftKernelRe[k][b] = 1 - dist; // triangular weight
-      }
-    }
-  } else {
-    cqtUseStft[k] = 0;
-  }
-}
-
-function computeCQTChroma(samples, stftMag, stftNFrames, stftNBins) {
-  var n = samples.length;
-  var nFrames = Math.floor(n / HOP_LENGTH);
-  if (nFrames <= 0) return null;
-
-  // Use min of STFT frames and computed frames
-  if (stftMag && stftNFrames < nFrames) nFrames = stftNFrames;
-
-  var chroma = new Float32Array(N_CHROMA * nFrames);
-
-  for (var f = 0; f < nFrames; f++) {
-    var center = f * HOP_LENGTH + (HOP_LENGTH >> 1);
-
-    for (var k = 0; k < CQT_BINS; k++) {
-      var magnitude;
-
-      if (cqtUseStft[k] && stftMag) {
-        // Low-freq: project from STFT magnitude
-        var kernel = cqtStftKernelRe[k];
-        var sum = 0;
-        for (var b = 0; b < stftNBins; b++) {
-          if (kernel[b] > 0) {
-            // STFT mag is power (re²+im²), take sqrt for magnitude
-            sum += kernel[b] * Math.sqrt(stftMag[b * stftNFrames + f]);
-          }
+/* ── Stationary-drone floor subtraction ─────────────────────────────────
+ * Per window and per chroma bin, subtract STRENGTH × (the bin's MINIMUM across
+ * the window's frames) — the level a continuous pitched drone (e.g. AC hum in one
+ * bin) never drops below — clamped at 0. Moving melody falls to ~0 between notes
+ * so its min ≈ 0 and it's preserved; a held-for-the-whole-window tone is removed.
+ * Gated by the process message's `droneSubtract` flag (Settings toggle, default ON).
+ * MUST stay identical to src/dsp/drone-subtract.ts → subtractDroneFloor. */
+const DRONE_FLOOR_STRENGTH = 1.0;
+function subtractDroneFloor(tensors, nWindows) {
+    for (let w = 0; w < nWindows; w++) {
+        const wbase = w * TENSOR_SIZE;
+        for (let c = 0; c < N_CHROMA; c++) {
+            const cbase = wbase + c * WINDOW_FRAMES;
+            let mn = Infinity;
+            for (let f = 0; f < WINDOW_FRAMES; f++) { const v = tensors[cbase + f]; if (v < mn) mn = v; }
+            if (!(mn > 0)) continue;
+            const floor = mn * DRONE_FLOOR_STRENGTH;
+            for (let f = 0; f < WINDOW_FRAMES; f++) {
+                const i = cbase + f;
+                const d = tensors[i] - floor;
+                tensors[i] = d > 0 ? d : 0;
+            }
         }
-        magnitude = sum * cqtNormFactors[k];
-      } else {
-        // High-freq: direct DFT
-        var N_k = cqtWinLens[k];
-        var halfN = N_k >> 1;
-        var start = center - halfN;
-        var win = cqtWindows[k];
-        var cosT = cqtCosTable[k];
-        var sinT = cqtSinTable[k];
-        var omega = cqtOmega[k];
-
-        var re = 0, im = 0;
-        if (cosT) {
-          for (var i = 0; i < N_k; i++) {
-            var idx = start + i;
-            var sample = (idx >= 0 && idx < n) ? samples[idx] * win[i] : 0;
-            re += sample * cosT[i];
-            im -= sample * sinT[i];
-          }
-        } else {
-          for (var i = 0; i < N_k; i++) {
-            var idx = start + i;
-            var sample = (idx >= 0 && idx < n) ? samples[idx] * win[i] : 0;
-            var phase = omega * i;
-            re += sample * Math.cos(phase);
-            im -= sample * Math.sin(phase);
-          }
-        }
-        magnitude = Math.sqrt(re * re + im * im) * cqtNormFactors[k];
-      }
-
-      var chromaBin = Math.floor((k % CQT_BINS_PER_OCTAVE) * N_CHROMA / CQT_BINS_PER_OCTAVE);
-      chroma[chromaBin * nFrames + f] += magnitude;
     }
-  }
-
-  return { chroma: chroma, nFrames: nFrames };
 }
 
-/**
- * Full CQT chromagram pipeline matching CLAUDE.md Step 1.1:
- * HPSS → CQT chroma → median filter → peak normalize → soft threshold
- *
- * @param samples raw audio (already HPSS-filtered harmonic component)
- * @returns { chroma, nFrames } or null
- */
-function processCQTChroma(samples) {
-  var result = computeCQTChroma(samples);
-  if (!result) return null;
-  var chroma = result.chroma;
-  var nFrames = result.nFrames;
+/* ── Initialization ─────────────────────────────────────────────────── */
 
-  // Median filter (1, 9) along time axis
-  chroma = medianFilter(chroma, nFrames);
-
-  // Peak normalize per frame
-  peakNormalize(chroma, nFrames);
-
-  return { chroma: chroma, nFrames: nFrames };
+async function fetchJson(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`fetch ${url} → ${r.status}`);
+    return r.json();
 }
 
-function specToChroma(spec, nFrames, nBins, fb) {
-  var filterBank = fb || chromaFB;
-  var chroma = new Float32Array(N_CHROMA * nFrames);
-  for (var f = 0; f < nFrames; f++) {
-    for (var c = 0; c < N_CHROMA; c++) {
-      var sum = 0;
-      var cBase = c * nBins;
-      for (var b = 0; b < nBins; b++) {
-        sum += filterBank[cBase + b] * spec[b * nFrames + f];
-      }
-      chroma[c * nFrames + f] = sum;
-    }
-  }
-  return chroma;
-}
-
-function processStandard(mag, nFrames, nBins) {
-  var chroma = specToChroma(mag, nFrames, nBins);
-  var filtered = medianFilter(chroma, nFrames);
-  // rawEnergy: per-frame normalized copy for chromagram display.
-  // Without this, web mic gain differences make the chromagram too dark.
-  var rawEnergy = new Float32Array(filtered);
-  for (var f = 0; f < nFrames; f++) {
-    var mx = 1e-10;
-    for (var c = 0; c < N_CHROMA; c++) {
-      var v = rawEnergy[c * nFrames + f];
-      if (v > mx) mx = v;
-    }
-    var inv = 1 / mx;
-    for (var c = 0; c < N_CHROMA; c++) {
-      rawEnergy[c * nFrames + f] *= inv;
-    }
-  }
-  peakNormalize(filtered, nFrames);
-  return { chroma: filtered, rawEnergy: rawEnergy };
-}
-
-function removeDrone(chroma, nFrames) {
-  var out = new Float32Array(chroma.length);
-  if (!_droneRow || _droneRow.length < nFrames) _droneRow = new Float32Array(nFrames);
-  if (!_droneMedOut || _droneMedOut.length < nFrames) _droneMedOut = new Float32Array(nFrames);
-  var row = _droneRow;
-  var medOut = _droneMedOut;
-
-  for (var c = 0; c < N_CHROMA; c++) {
-    var base = c * nFrames;
-    for (var f = 0; f < nFrames; f++) row[f] = chroma[base + f];
-    median1d(row, nFrames, DRONE_WINDOW, medOut);
-    for (var f = 0; f < nFrames; f++) {
-      out[base + f] = Math.max(0, chroma[base + f] - medOut[f]);
-    }
-  }
-  return out;
-}
-
-/**
- * Chromagram matching the interval model training pipeline (CLAUDE.md Step 1.1):
- *   HPSS harmonic → chroma (STFT-based, approximating CQT) →
- *   median filter (1,9) → peak normalize → soft threshold (0.15 × 0.1)
- *
- * Key differences from processForeground:
- *   - Uses STANDARD filter bank (not melody-range restricted)
- *   - NO drone removal (training pipeline doesn't do this)
- *   - Soft threshold matches training exactly
- */
-/**
- * Interval model chroma pipeline (CLAUDE.md Step 1.1):
- *   Raw audio → CQT chroma → median filter → peak normalize → soft threshold
- *
- * Uses direct CQT (not STFT-based) with librosa-matching normalization.
- * HPSS is skipped — the model has an internal melody gate.
- */
-/**
- * Interval model chromagram — matches ref_chromagram.js exactly:
- *   STFT → HPSS soft mask → log-frequency chroma mapping → median → peak norm → threshold
- *
- * Key: does NOT use chroma_fb.json. Uses simple log2(f/C1) % 12 mapping
- * with energy summation (squared magnitude → sqrt).
- */
-// ── Incremental interval chroma cache ──
-// Stores the raw (pre-median, pre-normalize) chroma for the whole session.
-// Each cycle, only compute new frames from the HPSS spectrogram.
-var _ivlRawCache = null;      // Float32Array [12 × cachedFrames] — raw energy chroma
-var _ivlCacheFrames = 0;      // how many frames are cached
-var _ivlProcessedCache = null; // Float32Array — fully processed (median + norm + thresh)
-var _ivlProcessedFrames = 0;
-
-function resetIntervalChromaCache() {
-  _ivlRawCache = null;
-  _ivlCacheFrames = 0;
-  _ivlProcessedCache = null;
-  _ivlProcessedFrames = 0;
-}
-
-/**
- * Incremental interval chroma: only computes new frames.
- * Returns the full session chroma (processed).
- */
-function processIntervalChromaIncremental(harmonicSpec, nFrames, nBins) {
-  var C1 = 440 * Math.pow(2, -4.75);
-
-  // How many new frames to compute?
-  var newStart = _ivlCacheFrames;
-  var newCount = nFrames - newStart;
-
-  if (newCount <= 0 && _ivlProcessedCache && _ivlProcessedFrames === nFrames) {
-    // Nothing new — return cached result
-    return { chroma: _ivlProcessedCache, nFrames: nFrames };
-  }
-
-  // Grow the raw cache if needed
-  if (!_ivlRawCache || _ivlRawCache.length < N_CHROMA * nFrames) {
-    var newCache = new Float32Array(N_CHROMA * Math.max(nFrames, 1024));
-    if (_ivlRawCache) {
-      // Copy existing data (shift to new layout since nFrames changed)
-      // Raw cache is [12 × oldFrames], need to re-layout to [12 × newCapacity]
-      // Actually, harmonicSpec changes layout each cycle (bin-major with current nFrames).
-      // We need to recompute from scratch when nFrames changes total layout.
-      // For simplicity, just recompute all when buffer grows.
-    }
-    _ivlRawCache = newCache;
-    newStart = 0;
-    newCount = nFrames;
-  }
-
-  // Compute raw chroma for new frames
-  var rawCache = _ivlRawCache;
-  var capacity = Math.floor(rawCache.length / N_CHROMA);
-
-  for (var f = newStart; f < nFrames; f++) {
-    // Zero the chroma bins for this frame
-    for (var c = 0; c < N_CHROMA; c++) rawCache[c * capacity + f] = 0;
-
-    for (var k = 1; k < nBins; k++) {
-      var freq = k * SAMPLE_RATE / N_FFT;
-      if (freq < 60 || freq > 5000) continue;
-      var pitchClass = Math.round(12 * Math.log2(freq / C1)) % 12;
-      pitchClass = ((pitchClass % 12) + 12) % 12;
-      var mag = harmonicSpec[k * nFrames + f];
-      rawCache[pitchClass * capacity + f] += mag * mag;
-    }
-    for (var c = 0; c < N_CHROMA; c++) {
-      rawCache[c * capacity + f] = Math.sqrt(rawCache[c * capacity + f]);
-    }
-  }
-  _ivlCacheFrames = nFrames;
-
-  // Build compact output [12 × nFrames] from the capacity-sized cache
-  var chroma = new Float32Array(N_CHROMA * nFrames);
-  for (var c = 0; c < N_CHROMA; c++) {
-    chroma.set(rawCache.subarray(c * capacity, c * capacity + nFrames), c * nFrames);
-  }
-
-  // Apply median filter + peak normalize + soft threshold
-  chroma = medianFilter(chroma, nFrames);
-  peakNormalize(chroma, nFrames);
-  for (var i = 0; i < chroma.length; i++) {
-    if (chroma[i] < 0.15) chroma[i] *= 0.1;
-  }
-
-  _ivlProcessedCache = chroma;
-  _ivlProcessedFrames = nFrames;
-
-  return { chroma: chroma, nFrames: nFrames };
-}
-
-// Legacy non-cached version (kept for reference)
-function processIntervalChroma(harmonicSpec, nFrames, nBins) {
-  // harmonicSpec is HPSS-filtered magnitude spectrogram [nBins × nFrames]
-  var C1 = 440 * Math.pow(2, -4.75); // ~32.7 Hz
-  var chroma = new Float32Array(N_CHROMA * nFrames);
-
-  // Map each STFT bin to a chroma class via log2(f/C1)
-  for (var f = 0; f < nFrames; f++) {
-    for (var k = 1; k < nBins; k++) {
-      var freq = k * SAMPLE_RATE / N_FFT;
-      if (freq < 60 || freq > 5000) continue; // musical range only
-
-      var pitchClass = Math.round(12 * Math.log2(freq / C1)) % 12;
-      pitchClass = ((pitchClass % 12) + 12) % 12; // ensure positive
-
-      // Energy summation (squared magnitude)
-      var mag = harmonicSpec[k * nFrames + f];
-      chroma[pitchClass * nFrames + f] += mag * mag;
-    }
-    // Square root for magnitude-like values
-    for (var c = 0; c < N_CHROMA; c++) {
-      chroma[c * nFrames + f] = Math.sqrt(chroma[c * nFrames + f]);
-    }
-  }
-
-  // Median filter (9) along time
-  chroma = medianFilter(chroma, nFrames);
-
-  // Peak normalize per frame
-  peakNormalize(chroma, nFrames);
-
-  // Soft threshold: bins below 0.15 *= 0.1
-  for (var i = 0; i < chroma.length; i++) {
-    if (chroma[i] < 0.15) chroma[i] *= 0.1;
-  }
-
-  return { chroma: chroma, nFrames: nFrames };
-}
-
-function processForeground(mag, nFrames, nBins) {
-  var harmonicSpec = hpss(mag, nFrames, nBins);
-  var chroma = specToChroma(harmonicSpec, nFrames, nBins, chromaFB_melody);
-  var deDroned = removeDrone(chroma, nFrames);
-  var filtered = medianFilter(deDroned, nFrames);
-  peakNormalize(filtered, nFrames);
-  return filtered;
-}
-
-function processMelodyOnly(stdChroma, mag, nFrames, nBins) {
-  var len = N_CHROMA * nFrames;
-
-  // Step 1: Multi-resolution subtraction
-  var longFrames = (nFrames + 3) >> 2;
-  if (!_melLongBuf || _melLongBuf.length < N_CHROMA * longFrames) {
-    _melLongBuf = new Float32Array(N_CHROMA * longFrames);
-  }
-  var longChroma = _melLongBuf;
-
-  // Downsample: average groups of 4
-  for (var c = 0; c < N_CHROMA; c++) {
-    var srcRow = c * nFrames;
-    var dstRow = c * longFrames;
-    for (var lf = 0; lf < longFrames; lf++) {
-      var f0 = lf * 4;
-      var f1 = Math.min(f0 + 4, nFrames);
-      var sum = 0;
-      for (var f = f0; f < f1; f++) sum += stdChroma[srcRow + f];
-      longChroma[dstRow + lf] = sum / (f1 - f0);
-    }
-  }
-
-  // Subtraction + upsample in one pass
-  var melody = new Float32Array(len);
-  for (var c = 0; c < N_CHROMA; c++) {
-    var srcRow = c * nFrames;
-    var longRow = c * longFrames;
-    for (var f = 0; f < nFrames; f++) {
-      var lPos = f / 4;
-      var li = lPos | 0;
-      var lj = Math.min(li + 1, longFrames - 1);
-      var frac = lPos - li;
-      var longVal = longChroma[longRow + li] * (1 - frac) + longChroma[longRow + lj] * frac;
-      var diff = stdChroma[srcRow + f] - 0.8 * longVal;
-      melody[srcRow + f] = diff > 0 ? diff : 0;
-    }
-  }
-
-  // Step 2: Temporal derivative blending
-  if (!_melDiffBuf || _melDiffBuf.length < len) {
-    _melDiffBuf = new Float32Array(len);
-  }
-  var chromaDiff = _melDiffBuf;
-
-  var diffMax = 0;
-  for (var c = 0; c < N_CHROMA; c++) {
-    var row = c * nFrames;
-    chromaDiff[row] = 0;
-    for (var f = 1; f < nFrames; f++) {
-      var d = stdChroma[row + f] - stdChroma[row + f - 1];
-      if (d < 0) d = -d;
-      chromaDiff[row + f] = d;
-      if (d > diffMax) diffMax = d;
-    }
-  }
-
-  if (diffMax > 0) {
-    var invDiffMax = 1 / diffMax;
-    for (var c = 0; c < N_CHROMA; c++) {
-      var row = c * nFrames;
-      for (var f = 0; f < nFrames; f++) {
-        var idx = row + f;
-        melody[idx] = 0.6 * melody[idx]
-          + 0.4 * stdChroma[idx] * chromaDiff[idx] * invDiffMax;
-      }
-    }
-  }
-
-  // Step 3: Onset-weighted gating
-  if (!_melOnsetBuf || _melOnsetBuf.length < nFrames) {
-    _melOnsetBuf = new Float32Array(nFrames);
-  }
-  if (!_melGateBuf || _melGateBuf.length < nFrames) {
-    _melGateBuf = new Float32Array(nFrames);
-  }
-  var onset = _melOnsetBuf;
-  var gate = _melGateBuf;
-
-  var onsetMax = 0;
-  onset[0] = 0;
-  for (var f = 1; f < nFrames; f++) {
-    var flux = 0;
-    for (var b = 0; b < nBins; b++) {
-      var d = mag[b * nFrames + f] - mag[b * nFrames + f - 1];
-      if (d > 0) flux += d;
-    }
-    onset[f] = flux;
-    if (flux > onsetMax) onsetMax = flux;
-  }
-
-  if (onsetMax > 0) {
-    var invOnsetMax = 1 / onsetMax;
-    for (var f = 0; f < nFrames; f++) onset[f] *= invOnsetMax;
-  }
-
-  for (var f = 0; f < nFrames; f++) {
-    var mx = 0;
-    var end = Math.min(f + 6, nFrames);
-    for (var j = f; j < end; j++) {
-      if (onset[j] > mx) mx = onset[j];
-    }
-    gate[f] = mx < 0.1 ? 0.1 : mx;
-  }
-
-  for (var c = 0; c < N_CHROMA; c++) {
-    var row = c * nFrames;
-    for (var f = 0; f < nFrames; f++) {
-      melody[row + f] *= gate[f];
-    }
-  }
-
-  // Step 4: Chord penalty
-  for (var f = 0; f < nFrames; f++) {
-    var fMax = 0;
-    for (var c = 0; c < N_CHROMA; c++) {
-      var v = melody[c * nFrames + f];
-      if (v > fMax) fMax = v;
-    }
-    if (fMax < 1e-10) continue;
-
-    var active = 0;
-    var thresh = fMax * 0.25;
-    for (var c = 0; c < N_CHROMA; c++) {
-      if (melody[c * nFrames + f] > thresh) active++;
-    }
-
-    var penalty = 1.0 - (active - 2) * 0.4;
-    if (penalty > 1) penalty = 1;
-    if (penalty < 0.2) penalty = 0.2;
-
-    for (var c = 0; c < N_CHROMA; c++) {
-      melody[c * nFrames + f] *= penalty;
-    }
-  }
-
-  // Final: median filter + peak normalize
-  var filtered = medianFilter(melody, nFrames);
-  peakNormalize(filtered, nFrames);
-  return filtered;
-}
-
-// ══════════════════════════════════════════════════════════
-// Prepare Model Inputs
-// ══════════════════════════════════════════════════════════
-var TENSOR_SIZE = 2 * N_CHROMA * WINDOW_FRAMES;
-var CH1_OFFSET = N_CHROMA * WINDOW_FRAMES;
-
-function prepareModelInputs(chroma, nFrames) {
-  var chromaSoft = softmaxNormalize(chroma, nFrames);
-  var tensors = [];
-
-  if (nFrames < WINDOW_FRAMES) {
-    var data = new Float32Array(TENSOR_SIZE);
-    for (var c = 0; c < N_CHROMA; c++) {
-      var srcOff = c * nFrames;
-      var dstOff = c * WINDOW_FRAMES;
-      data.set(chromaSoft.subarray(srcOff, srcOff + nFrames), dstOff);
-      data[CH1_OFFSET + dstOff] = 0;
-      for (var f = 1; f < nFrames; f++) {
-        data[CH1_OFFSET + dstOff + f] = data[dstOff + f] - data[dstOff + f - 1];
-      }
-    }
-    tensors.push(data);
-  } else {
-    for (var start = 0; start <= nFrames - WINDOW_FRAMES; start += HOP_FRAMES) {
-      var data = new Float32Array(TENSOR_SIZE);
-      for (var c = 0; c < N_CHROMA; c++) {
-        var srcOff = c * nFrames + start;
-        var dstOff = c * WINDOW_FRAMES;
-        data.set(chromaSoft.subarray(srcOff, srcOff + WINDOW_FRAMES), dstOff);
-        data[CH1_OFFSET + dstOff] = 0;
-        for (var f = 1; f < WINDOW_FRAMES; f++) {
-          data[CH1_OFFSET + dstOff + f] = data[dstOff + f] - data[dstOff + f - 1];
-        }
-      }
-      tensors.push(data);
-    }
-  }
-
-  return tensors;
-}
-
-/**
- * Prepare model inputs for fold12 model (d768-9L).
- * Input: 12-bin chroma → cube sharpen → positive diff → 343-frame windows.
- * Output shape per tensor: (12, 343) = 12 × 343 float32.
- */
-var FOLD12_WINDOW = 344;
-var FOLD12_HOP = 172;
-var FOLD12_TENSOR_SIZE = 12 * 344;  // no diff — model takes raw sharpened fold12
-
-/**
- * Prepare fold12 model inputs from 12-bin HCQT consensus-cleaned chroma.
- *
- * The HCQT WASM already does: CQT h1,h2,h3 → consensus → blur → mask f1 → fold 36→12.
- * This function just windows the cleaned chroma into 344-frame chunks.
- *
- * @param chroma12 Float32Array [12 × nFrames] — HCQT cleaned chroma
- * @param nFrames number of frames
- */
-function prepareFold12Inputs(chroma12, nFrames) {
-  var tensors = [];
-
-  if (nFrames < FOLD12_WINDOW) {
-    var padded = new Float32Array(12 * FOLD12_WINDOW);
-    for (var c = 0; c < 12; c++) {
-      padded.set(chroma12.subarray(c * nFrames, c * nFrames + nFrames), c * FOLD12_WINDOW);
-    }
-    chroma12 = padded;
-    nFrames = FOLD12_WINDOW;
-  }
-
-  for (var start = 0; start <= nFrames - FOLD12_WINDOW; start += FOLD12_HOP) {
-    var data = new Float32Array(FOLD12_TENSOR_SIZE);
-    for (var c = 0; c < 12; c++) {
-      data.set(
-        chroma12.subarray(c * nFrames + start, c * nFrames + start + FOLD12_WINDOW),
-        c * FOLD12_WINDOW
-      );
-    }
-    tensors.push(data);
-  }
-
-  return tensors;
-}
-
-// ══════════════════════════════════════════════════════════
-// Tempo Estimation
-// ══════════════════════════════════════════════════════════
-var TEMPO_FRAME_LEN = 1024;
-var TEMPO_HOP_LEN = 512;
-var TEMPO_NBINS = (TEMPO_FRAME_LEN >> 1) + 1;
-var _tempoHann = null;
-var _tempoRe = null;
-var _tempoIm = null;
-var _tempoPrevMag = null;
-
-function ensureTempoBuffers() {
-  if (!_tempoHann) {
-    _tempoHann = new Float32Array(TEMPO_FRAME_LEN);
-    for (var i = 0; i < TEMPO_FRAME_LEN; i++) {
-      _tempoHann[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / TEMPO_FRAME_LEN));
-    }
-    _tempoRe = new Float32Array(TEMPO_FRAME_LEN);
-    _tempoIm = new Float32Array(TEMPO_FRAME_LEN);
-    _tempoPrevMag = new Float32Array(TEMPO_NBINS);
-  }
-}
-
-function estimateTempo(samples) {
-  ensureTempoBuffers();
-  var frameLen = TEMPO_FRAME_LEN;
-  var hopLen = TEMPO_HOP_LEN;
-  var nFrames = Math.floor((samples.length - frameLen) / hopLen) + 1;
-  if (nFrames < 10) return null;
-
-  var re = _tempoRe;
-  var im = _tempoIm;
-  var nBins = TEMPO_NBINS;
-  var prevMag = _tempoPrevMag;
-  prevMag.fill(0);
-  var flux = new Float32Array(nFrames);
-  var onsetHann = _tempoHann;
-
-  for (var f = 0; f < nFrames; f++) {
-    var offset = f * hopLen;
-    for (var i = 0; i < frameLen; i++) {
-      re[i] = (offset + i < samples.length) ? samples[offset + i] * onsetHann[i] : 0;
-      im[i] = 0;
-    }
-    fft(re, im);
-
-    var fluxSum = 0;
-    for (var b = 0; b < nBins; b++) {
-      var mag = Math.sqrt(re[b] * re[b] + im[b] * im[b]);
-      var diff = mag - prevMag[b];
-      if (diff > 0) fluxSum += diff;
-      prevMag[b] = mag;
-    }
-    flux[f] = fluxSum;
-  }
-
-  var maxFlux = 0;
-  for (var i = 0; i < nFrames; i++) if (flux[i] > maxFlux) maxFlux = flux[i];
-  if (maxFlux < 1e-10) return null;
-  for (var i = 0; i < nFrames; i++) flux[i] /= maxFlux;
-
-  // Threshold lowered from 0.15 → 0.06 — Irish trad sessions are usually
-  // unaccompanied (fiddle / flute / whistle / pipes) so onset spectral-flux
-  // peaks are modest compared to drum-driven music.  Vocal removal also
-  // strips some attack transients; even on raw samples (which we now use)
-  // a bowed note at uniform dynamics doesn't produce huge flux changes.
-  var threshold = 0.06;
-  // Also relax local-max from 5-frame to 3-frame so closely spaced notes
-  // (sixteenths in a reel: ~0.13 s apart) don't get filtered out.
-  var onsets = [];
-  for (var i = 1; i < nFrames - 1; i++) {
-    if (flux[i] > threshold &&
-      flux[i] > flux[i - 1] &&
-      flux[i] >= flux[i + 1]) {
-      onsets.push(i * hopLen / SAMPLE_RATE);
-    }
-  }
-
-  if (onsets.length < 4) {
-    console.log('[Worker] tempo: only ' + onsets.length + ' onsets passed threshold (need 4+) — flux maxFlux=' + maxFlux.toFixed(4));
-    return null;
-  }
-
-  var iois = [];
-  for (var i = 1; i < onsets.length; i++) {
-    var dt = onsets[i] - onsets[i - 1];
-    if (dt > 0.08 && dt < 1.5) iois.push(dt);
-  }
-  if (iois.length < 3) return null;
-
-  var maxLag = Math.min(nFrames, Math.floor(2.0 * SAMPLE_RATE / hopLen));
-  var minLag = Math.floor(0.2 * SAMPLE_RATE / hopLen);
-  var bestLag = minLag;
-  var bestCorr = -Infinity;
-
-  for (var lag = minLag; lag < maxLag && lag < nFrames; lag++) {
-    var corr = 0;
-    var count = 0;
-    for (var i = 0; i < nFrames - lag; i++) {
-      corr += flux[i] * flux[i + lag];
-      count++;
-    }
-    corr /= Math.max(count, 1);
-    if (corr > bestCorr) {
-      bestCorr = corr;
-      bestLag = lag;
-    }
-  }
-
-  var beatPeriod = bestLag * hopLen / SAMPLE_RATE;
-  var bpm = 60.0 / beatPeriod;
-
-  var adjustedBpm = bpm;
-  if (adjustedBpm < 60) adjustedBpm *= 2;
-  if (adjustedBpm < 60) adjustedBpm *= 2;
-  if (adjustedBpm > 250) adjustedBpm /= 2;
-  if (adjustedBpm > 250) adjustedBpm /= 2;
-
-  return Math.round(adjustedBpm);
-}
-
-// ══════════════════════════════════════════════════════════
-// ══════════════════════════════════════════════════════════
-// ONNX Inference (runs inside the worker — main thread is free)
-// ══════════════════════════════════════════════════════════
-var _onnxSession = null;
-var _onnxReady = false;
-var _softmaxPool = null;
-
-async function inferWindows(windowTensors) {
-  if (!_onnxSession) return [];
-  var allProbs = [];
-  for (var w = 0; w < windowTensors.length; w++) {
-    var input = new self.ort.Tensor('float32', windowTensors[w], [1, 2 * N_CHROMA, WINDOW_FRAMES]);
-    var output = await _onnxSession.run({ input: input });
-    var logits = output.output.data;
-    var nC = logits.length;
-    if (!_softmaxPool || _softmaxPool.length !== nC) _softmaxPool = new Float32Array(nC);
-    var maxL = -Infinity;
-    for (var i = 0; i < nC; i++) if (logits[i] > maxL) maxL = logits[i];
-    var sum = 0;
-    for (var i = 0; i < nC; i++) {
-      _softmaxPool[i] = Math.exp(logits[i] - maxL);
-      sum += _softmaxPool[i];
-    }
-    var invSum = 1 / sum;
-    var probs = new Float32Array(nC);
-    for (var i = 0; i < nC; i++) probs[i] = _softmaxPool[i] * invSum;
-    allProbs.push(probs);
-  }
-  return allProbs;
-}
-
-function averageProbs(allProbs) {
-  var n = allProbs.length;
-  var nC = allProbs[0].length;
-  var avg = new Float32Array(nC);
-  for (var p = 0; p < n; p++)
-    for (var i = 0; i < nC; i++) avg[i] += allProbs[p][i];
-  for (var i = 0; i < nC; i++) avg[i] /= n;
-  return avg;
-}
-
-function findMax(arr) {
-  var mx = 0;
-  for (var i = 0; i < arr.length; i++) if (arr[i] > mx) mx = arr[i];
-  return mx || 1;
-}
-
-async function runEnsemble(tensorsStd, tensorsFg, tensorsMel) {
-  if (!_onnxReady) return { avg: new Float32Array(0), nClasses: 0 };
-  var hasStd = tensorsStd.length > 0;
-  var hasFg = tensorsFg.length > 0;
-  var hasMel = tensorsMel.length > 0;
-
-  var probsStd = hasStd ? await inferWindows(tensorsStd) : [];
-  var probsFg = hasFg ? await inferWindows(tensorsFg) : [];
-  var probsMel = hasMel ? await inferWindows(tensorsMel) : [];
-
-  var avgStd = hasStd && probsStd.length > 0 ? averageProbs(probsStd) : null;
-  var avgFg = hasFg && probsFg.length > 0 ? averageProbs(probsFg) : null;
-  var avgMel = hasMel && probsMel.length > 0 ? averageProbs(probsMel) : null;
-
-  var ref = avgStd || avgFg || avgMel;
-  if (!ref) return { avg: new Float32Array(0), nClasses: 0 };
-  var nClasses = ref.length;
-
-  var maxStd = avgStd ? findMax(avgStd) : 1;
-  var maxFg = avgFg ? findMax(avgFg) : 1;
-  var maxMel = avgMel ? findMax(avgMel) : 1;
-
-  var wStd, wFg, wMel;
-  if (hasStd && hasFg && hasMel) { wStd = WEIGHT_STD; wFg = WEIGHT_FG; wMel = WEIGHT_MEL; }
-  else if (hasStd && hasMel) { wStd = WEIGHT_STD_2WAY; wFg = 0; wMel = WEIGHT_MEL_2WAY; }
-  else if (hasStd && hasFg) { wStd = 0.60; wFg = 0.40; wMel = 0; }
-  else if (hasStd) { wStd = 1; wFg = 0; wMel = 0; }
-  else if (hasFg) { wStd = 0; wFg = 1; wMel = 0; }
-  else { wStd = 0; wFg = 0; wMel = 1; }
-
-  var avg = new Float32Array(nClasses);
-  for (var i = 0; i < nClasses; i++) {
-    var v = 0;
-    if (avgStd) v += wStd * (avgStd[i] / maxStd);
-    if (avgFg) v += wFg * (avgFg[i] / maxFg);
-    if (avgMel) v += wMel * (avgMel[i] / maxMel);
-    avg[i] = v;
-  }
-  return { avg: avg, nClasses: nClasses };
-}
-
-async function loadOnnxModel(baseUrl, modelUrl) {
-  try {
-    // Load ort runtime
-    importScripts(baseUrl + '/ort.min.js');
-    // Multi-threaded WASM requires SharedArrayBuffer (cross-origin
-    // isolation via COOP/COEP — supplied by coi-serviceworker on GitHub
-    // Pages). Use up to 4 threads when available, else single-thread.
-    // Degrades gracefully: no SAB → numThreads = 1, no crash.
-    var _canThread =
-      (typeof self.crossOriginIsolated === 'undefined' || self.crossOriginIsolated) &&
-      typeof SharedArrayBuffer !== 'undefined';
-    self.ort.env.wasm.numThreads = _canThread
-      ? Math.min(4, (self.navigator && self.navigator.hardwareConcurrency) || 1)
-      : 1;
-    self.ort.env.wasm.wasmPaths = baseUrl + '/';
-    // Limit WASM proxy to reduce memory
-    self.ort.env.wasm.proxy = false;
-
-    // Create session
-    _onnxSession = await self.ort.InferenceSession.create(modelUrl, {
-      executionProviders: ['wasm'],
-      enableMemPattern: true,     // reuse memory allocation patterns
-      enableCpuMemArena: true,    // arena allocator reduces fragmentation
-      interOpNumThreads: 1,
-      intraOpNumThreads: 1,
+/** Dev flag — set by the main thread on init. False on prod gh-pages
+ *  builds so the worker's own diagnostic logs stay off the user's
+ *  console. */
+let _tonicSession = null, _tonicInput = null, _tonicOutput = null;
+let _dev = false;
+const _dlog = (...args) => { if (_dev) console.log(...args); };
+
+async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, wasmVersion, softmaxT, dev }) {
+    _dev = !!dev;
+    _baseUrl = baseUrl || '';
+    _assetsBase = assetsBase || '';
+    if (typeof softmaxT === 'number' && softmaxT > 0) SOFTMAX_T = softmaxT;
+    _inputSr = inputSr | 0;
+    if (_inputSr <= 0) throw new Error(`bad inputSr ${inputSr}`);
+
+    // Cloudflare edge-caches by extension, so every .wasm / model URL below
+    // carries a `?v=` cache-bust token (bumped in ASSET_VERSIONS when the bytes
+    // change). Empty token → no query → identical to the un-versioned behaviour.
+    const wasmV = wasmVersion ? `?v=${wasmVersion}` : '';
+    const modelV = modelVersion ? `?v=${modelVersion}` : '';
+
+    importScripts(`${_baseUrl}/hcqt_fold12.js`);
+    importScripts(`${_baseUrl}/ort.min.js`);
+
+    _wasm = await self.createHcqtFold12Module({
+        locateFile: (p) => `${_baseUrl}/${p}${wasmV}`,
     });
-    _onnxReady = true;
-    // Log memory after model load for debugging iOS crashes
-    if (typeof performance !== 'undefined' && performance.memory) {
-      var mem = performance.memory;
-      console.log('[DSP Worker] Model loaded. JS heap: ' +
-        Math.round(mem.usedJSHeapSize / 1048576) + 'MB / ' +
-        Math.round(mem.jsHeapSizeLimit / 1048576) + 'MB');
-    }
-    self.postMessage({ type: 'model-loaded' });
-  } catch (err) {
-    self.postMessage({ type: 'model-error', error: err.message || String(err) });
-  }
-}
 
-// ══════════════════════════════════════════════════════════
-// Class→Tune aggregation (moved here to avoid 107KB/cycle transfer)
-// ══════════════════════════════════════════════════════════
-var _classToDense = null;  // Int32Array: classIdx → dense tune index
-var _numDenseTunes = 0;
-var _OBS_TOP_K = 100;
+    // ORT concatenates a string wasmPaths as a bare prefix (no room for a query),
+    // so version via the object form: map each shipped wasm file → its ?v= URL.
+    // ORT 1.18 looks up wasmPaths[filename] when it's an object (verified in the
+    // dist). Any file we don't map falls back to worker-dir-relative (unversioned
+    // but still resolvable) — so this can only ever add a version, never break a fetch.
+    self.ort.env.wasm.wasmPaths = wasmV
+        ? {
+            'ort-wasm-simd-threaded.wasm': `${_baseUrl}/ort-wasm-simd-threaded.wasm${wasmV}`,
+            'ort-wasm-simd.wasm': `${_baseUrl}/ort-wasm-simd.wasm${wasmV}`,
+          }
+        : `${_baseUrl}/`;
+    // Multi-threaded WASM needs SharedArrayBuffer, which only exists when
+    // the page is cross-origin isolated (COOP/COEP). The coi-serviceworker
+    // shim provides that on GitHub Pages. When it's active we use up to 4
+    // threads (clamped to hardware) for a 2-4x faster the tune model inference;
+    // otherwise we fall back to single-thread — graceful degradation, no
+    // crash if SAB is unavailable.
+    const _canThread =
+        (typeof self.crossOriginIsolated === 'undefined' || self.crossOriginIsolated) &&
+        typeof SharedArrayBuffer !== 'undefined';
+    self.ort.env.wasm.numThreads = _canThread
+        ? Math.min(4, (self.navigator && self.navigator.hardwareConcurrency) || 1)
+        : 1;
+    _dlog('[the tune model worker] wasm threads=' + self.ort.env.wasm.numThreads +
+        ' (crossOriginIsolated=' + (self.crossOriginIsolated === true) + ')');
 
-// Aggregate class probs → per-tune dense probs, return top-K
-function aggregateInWorker(classProbs) {
-  if (!_classToDense || _numDenseTunes === 0) return null;
-  var n = _numDenseTunes;
-  // Accumulate per-tune
-  var tuneProbs = new Float32Array(n);
-  for (var c = 0; c < classProbs.length; c++) {
-    var di = _classToDense[c];
-    if (di >= 0) tuneProbs[di] += classProbs[c];
-  }
-  // Find top-K
-  var topK = Math.min(_OBS_TOP_K, n);
-  var topIdx = new Int32Array(topK);
-  var topVal = new Float32Array(topK);
-  topIdx.fill(-1);
-  var count = 0, minVal = 0, minPos = 0;
-  for (var i = 0; i < n; i++) {
-    var v = tuneProbs[i];
-    if (v <= 0) continue;
-    if (count < topK) {
-      topIdx[count] = i;
-      topVal[count] = v;
-      count++;
-      if (count === topK) {
-        minVal = topVal[0]; minPos = 0;
-        for (var j = 1; j < topK; j++) { if (topVal[j] < minVal) { minVal = topVal[j]; minPos = j; } }
-      }
-    } else if (v > minVal) {
-      topIdx[minPos] = i;
-      topVal[minPos] = v;
-      minVal = topVal[0]; minPos = 0;
-      for (var j = 1; j < topK; j++) { if (topVal[j] < minVal) { minVal = topVal[j]; minPos = j; } }
-    }
-  }
-  return { topIdx: topIdx, topVal: topVal, topCount: count, tuneProbs: tuneProbs };
-}
-
-// ══════════════════════════════════════════════════════════
-// Worker Message Handler
-// ══════════════════════════════════════════════════════════
-var _lastHpssTime = 0;
-
-self.onmessage = async function(e) {
-  var type = e.data.type;
-  var id = e.data.id;
-
-  if (type === 'init') {
-    var fb = new Float32Array(e.data.chromaFB);
-    // Accept class→tune mapping for in-worker aggregation
-    if (e.data.classToDense) {
-      _classToDense = new Int32Array(e.data.classToDense);
-      _numDenseTunes = e.data.numDenseTunes || 0;
-      _OBS_TOP_K = e.data.obsTopK || 100;
-    }
-    initFilterBanks(fb);
-    initHannWindow();
-    if (e.data.baseUrl !== undefined) self._baseUrl = e.data.baseUrl;
-    self.postMessage({ type: 'ready' });
-    // Load ONNX model if URLs provided (eager mode — native builds)
-    if (e.data.baseUrl !== undefined && e.data.modelUrl) {
-      loadOnnxModel(e.data.baseUrl, e.data.modelUrl);
-    }
-    return;
-  }
-
-  if (type === 'load-model') {
-    // Deferred model load (web — triggered on first audio)
-    if (!_onnxReady && e.data.baseUrl !== undefined && e.data.modelUrl) {
-      loadOnnxModel(e.data.baseUrl, e.data.modelUrl);
-    }
-    return;
-  }
-
-  // ── HCQT melody extraction (WASM + cache) ──
-  // Loaded lazily on first process call. Cache stores computed chroma
-  // indexed by frame count — only new frames get processed.
-  if (!self._hcqtLoading && !self._hcqtModule) {
-    self._hcqtLoading = true;
-    self._hcqtChromaCache = null;
-    self._hcqtCachedFrames = 0;
-    self._hcqtNovelty = 0;
-    // Persistent key profile state (survives across calls)
-    self._keyProfileEmaPtr = null;
-    self._keyProfileWarmPtr = null;
-    importScripts((self._baseUrl || '') + '/hcqt_melody.js');
-    if (typeof createHCQTModule === 'function') {
-      createHCQTModule({
-        locateFile: function(path) {
-          return (self._baseUrl || '') + '/' + path;
+    // Model-fetch strategy with multiple fallback candidates. Some
+    // exports (FP16, 131 MB) exceed GitHub's 100 MB per-file limit and
+    // can't ship as a single file on gh-pages. We split them into
+    // shards locally (each ≤ 100 MB) and reassemble in the worker.
+    // The worker tries the candidates in order and uses the first one
+    // that works:
+    //   1. sharded local (works on gh-pages and dev)
+    //   2. single-file local (works on dev / native bundles where the
+    //      whole file is on disk)
+    //   3. GitHub release single-file (CORS-blocked from github.io but
+    //      kept as a last resort — works elsewhere)
+    //   4. degrade to INT8 QDQ (always in the gh-pages bundle as a
+    //      single file, so this is the ultimate safety net)
+    const RELEASE_FALLBACKS = {
+        'model_nokeycanon_fp16.onnx':
+            'https://github.com/msolters/tonnleas-web/releases/download/models-362-lr768/model_nokeycanon_fp16.onnx',
+        'model_nokeycanon_int8_qdq.onnx':
+            'https://github.com/msolters/tonnleas-web/releases/download/models-362-lr768/model_nokeycanon_int8_qdq.onnx',
+    };
+    // Models that ship sharded — listed here as their part count.
+    // Pieces are fetched at `${file}.part0`, `${file}.part1`, … and
+    // concatenated in order to reconstruct the original bytes.
+    const SHARDED_LOCAL = {
+        'model_nokeycanon_fp16.onnx': 2,
+        'model_nokeycanon_tanh_fp16.onnx': 2,
+    };
+    const requestedFilename = modelFile || 'model_nokeycanon_fp16.onnx';
+    const candidates = [];
+    const pushFile = (name) => {
+        const partCount = SHARDED_LOCAL[name];
+        if (partCount) {
+            const shardUrls = [];
+            for (let i = 0; i < partCount; i++) shardUrls.push(`${_assetsBase}/${name}.part${i}${modelV}`);
+            candidates.push({ kind: 'shards', urls: shardUrls, label: `local sharded ${name} (×${partCount})` });
         }
-      }).then(function(mod) {
-        self._hcqtModule = mod;
-        self._hcqtLoading = false;
-        console.log('[Worker] HCQT WASM module loaded');
-      }).catch(function(err) {
-        self._hcqtLoading = false;
-        console.warn('[Worker] HCQT WASM load failed:', err);
-      });
-    } else {
-      self._hcqtLoading = false;
-    }
-  }
-
-  if (type === 'process') {
-    var samples = new Float32Array(e.data.samples);
-    // Optional raw (pre-vocal-removal) samples used solely for tempo
-    // estimation.  Vocal removal strips drums / percussive transients which
-    // is what the spectral-flux onset detector relies on, so without this
-    // tempo would be null on every cycle.
-    var samplesRawForTempo = e.data.samplesRawForTempo
-      ? new Float32Array(e.data.samplesRawForTempo)
-      : null;
-    var cycle = e.data.cycle;
-    var doForeground = _lastHpssTime < 800 || cycle % 3 === 2;
-
-    // ── HCQT 3-way ensemble: all from CQT, no STFT needed ──
-    var nFrames = 0;
-    var hcqtFrames = 0;
-    var ensemble = { avg: new Float32Array(0), nClasses: 0 };
-
-    if (self._hcqtModule) {
-      var hcqtT0 = Date.now();
-      var mod = self._hcqtModule;
-      var nSamples = samples.length;
-      var maxFrames = Math.floor(nSamples / HOP_LENGTH);
-
-      // Allocate: 3 chroma outputs (12×T each) + guide (36×T) + masked (36×T)
-      // Allocate persistent key profile state (once, reused across calls)
-      if (!self._keyProfileEmaPtr) {
-        self._keyProfileEmaPtr = mod._malloc(12 * 4);  // 12 floats
-        self._keyProfileWarmPtr = mod._malloc(4);       // 1 int
-        // Zero-initialize
-        for (var ki = 0; ki < 12; ki++) mod.HEAPF32[(self._keyProfileEmaPtr >> 2) + ki] = 0;
-        mod.HEAP32[self._keyProfileWarmPtr >> 2] = 0;
-      }
-
-      var stdPtr     = mod._malloc(12 * maxFrames * 4);
-      var fgPtr      = mod._malloc(12 * maxFrames * 4);
-      var melPtr     = mod._malloc(12 * maxFrames * 4);
-      var guidePtr   = mod._malloc(36 * maxFrames * 4);
-      var maskedPtr  = mod._malloc(36 * maxFrames * 4);
-      var noveltyPtr = mod._malloc(4);  // 1 float
-      var samplesPtr = mod._malloc(nSamples * 4);
-
-      mod.HEAPF32.set(samples, samplesPtr >> 2);
-
-      // Single WASM call: 3 ensemble chromas + debug outputs + novelty
-      var actualFrames = mod._hcqt_melody(
-        samplesPtr, nSamples, stdPtr, fgPtr, melPtr, guidePtr, maskedPtr,
-        self._keyProfileEmaPtr, self._keyProfileWarmPtr, noveltyPtr
-      );
-      nFrames = actualFrames;
-      hcqtFrames = actualFrames;
-
-      // Read all outputs
-      var chromaStd = new Float32Array(mod.HEAPF32.buffer, stdPtr,    12 * nFrames).slice();
-      var chromaFg  = new Float32Array(mod.HEAPF32.buffer, fgPtr,     12 * nFrames).slice();
-      var chromaMel = new Float32Array(mod.HEAPF32.buffer, melPtr,    12 * nFrames).slice();
-      self._hcqtGuideCache  = new Float32Array(mod.HEAPF32.buffer, guidePtr,  36 * nFrames).slice();
-      self._hcqtMaskedCache = new Float32Array(mod.HEAPF32.buffer, maskedPtr, 36 * nFrames).slice();
-      self._hcqtChromaCache = chromaStd;
-      self._hcqtNovelty = mod.HEAPF32[noveltyPtr >> 2];
-
-      mod._free(samplesPtr);
-      mod._free(stdPtr);
-      mod._free(fgPtr);
-      mod._free(melPtr);
-      mod._free(guidePtr);
-      mod._free(maskedPtr);
-      mod._free(noveltyPtr);
-      // NOTE: keyProfileEmaPtr and keyProfileWarmPtr are persistent — NOT freed
-
-      var noveltyStr = self._hcqtNovelty > 0.01 ? ' novelty=' + self._hcqtNovelty.toFixed(3) : '';
-      console.log('[Worker] HCQT 3-way: ' + nFrames + ' frames in ' + (Date.now() - hcqtT0) + 'ms' + noveltyStr);
-
-      // 3-way ensemble from CQT using fold12 preprocessing (sharpen→diff→rectify)
-      // Use the 12-bin HCQT consensus-cleaned chroma with cube sharpen
-      var tensorsStd = prepareModelInputs(chromaStd, nFrames);
-      var tensorsFg  = prepareModelInputs(chromaFg, nFrames);
-      var tensorsMel = prepareModelInputs(chromaMel, nFrames);
-
-      if (_onnxReady) {
-        ensemble = await runEnsemble(tensorsStd, tensorsFg, tensorsMel);
-      }
-    } else {
-      // HCQT not loaded yet — can't do fold12 preprocessing without 36-bin data
-      // Just compute basic chroma for display, skip inference
-      nFrames = Math.floor(samples.length / HOP_LENGTH);
-      console.log('[Worker] HCQT not ready, skipping inference');
+        candidates.push({ kind: 'single', url: `${_assetsBase}/${name}${modelV}`, sameOrigin: true, label: `local ${name}` });
+        if (RELEASE_FALLBACKS[name]) {
+            candidates.push({ kind: 'single', url: RELEASE_FALLBACKS[name], sameOrigin: false, label: `release ${name}` });
+        }
+    };
+    pushFile(requestedFilename);
+    if (requestedFilename !== 'model_nokeycanon_int8_qdq.onnx') {
+        // FP16 (or any non-INT8) requested → fall back to INT8 (single
+        // file in bundle) if all the primary candidates fail.
+        pushFile('model_nokeycanon_int8_qdq.onnx');
     }
 
-    // Tempo on raw samples when available — denoised audio has no drums.
-    var tempo = estimateTempo(samplesRawForTempo || samples);
-    if (tempo === null && samplesRawForTempo) {
-      // Diagnostic: confirm we tried raw and it still came back null
-      console.log('[Worker] tempo: null even on raw samples (len=' + samplesRawForTempo.length + ')');
-    } else if (tempo !== null) {
-      console.log('[Worker] tempo: ' + tempo + ' bpm (source=' + (samplesRawForTempo ? 'raw' : 'cleaned') + ')');
+    // ── Fetch helpers: each returns a single Uint8Array on success ──
+    async function fetchSingle({ url, sameOrigin, label }, postProgress) {
+        try {
+            const r = await fetch(url, sameOrigin ? { credentials: 'same-origin' } : undefined);
+            if (!r.ok) return { buf: null, reason: `HTTP ${r.status}` };
+            const ct = r.headers.get('content-type') ?? '';
+            if (ct.includes('text/html') || ct.includes('application/json')) {
+                return { buf: null, reason: `bad content-type "${ct}"` };
+            }
+            const total = +(r.headers.get('content-length') ?? '0');
+            const reader = r.body?.getReader();
+            if (!reader) return { buf: null, reason: 'no body stream' };
+            const chunks = [];
+            let loaded = 0;
+            if (postProgress) postProgress(0, total);
+            let lastPost = 0;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                loaded += value.byteLength;
+                const nowT = Date.now();
+                if (postProgress && nowT - lastPost > 33) {
+                    postProgress(loaded, total);
+                    lastPost = nowT;
+                }
+            }
+            if (postProgress) postProgress(loaded, total || loaded);
+            const buf = new Uint8Array(loaded);
+            let off = 0;
+            for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+            return { buf, reason: 'ok', label };
+        } catch (err) {
+            return { buf: null, reason: err?.message ?? 'fetch error' };
+        }
+    }
+    async function fetchSharded({ urls, label }, postProgress) {
+        // Fetch all parts in parallel for max throughput; reassemble in
+        // declared order. Progress is the sum of all loaded bytes so far
+        // — totals are summed across the parts.
+        try {
+            const partLoaded = new Array(urls.length).fill(0);
+            const partTotal = new Array(urls.length).fill(0);
+            const parts = await Promise.all(urls.map(async (u, i) => {
+                const r = await fetch(u, { credentials: 'same-origin' });
+                if (!r.ok) throw new Error(`shard ${i} (${u}) → HTTP ${r.status}`);
+                const ct = r.headers.get('content-type') ?? '';
+                if (ct.includes('text/html') || ct.includes('application/json')) {
+                    throw new Error(`shard ${i} bad content-type "${ct}"`);
+                }
+                partTotal[i] = +(r.headers.get('content-length') ?? '0');
+                const reader = r.body?.getReader();
+                if (!reader) throw new Error(`shard ${i} no body stream`);
+                const chunks = [];
+                let lastPost = 0;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    chunks.push(value);
+                    partLoaded[i] += value.byteLength;
+                    const nowT = Date.now();
+                    if (postProgress && nowT - lastPost > 33) {
+                        let totL = 0, totT = 0;
+                        for (let j = 0; j < urls.length; j++) { totL += partLoaded[j]; totT += partTotal[j]; }
+                        postProgress(totL, totT);
+                        lastPost = nowT;
+                    }
+                }
+                const sz = partLoaded[i];
+                const buf = new Uint8Array(sz);
+                let off = 0;
+                for (const c of chunks) { buf.set(c, off); off += c.byteLength; }
+                return buf;
+            }));
+            const total = parts.reduce((a, p) => a + p.byteLength, 0);
+            if (postProgress) postProgress(total, total);
+            const combined = new Uint8Array(total);
+            let off = 0;
+            for (const p of parts) { combined.set(p, off); off += p.byteLength; }
+            return { buf: combined, reason: 'ok', label };
+        } catch (err) {
+            return { buf: null, reason: err?.message ?? 'shard fetch error' };
+        }
     }
 
-    // Transfer results
-    var fullChroma  = new Float32Array(self._hcqtChromaCache || new Float32Array(12));
-    var fullRawEnergy = new Float32Array(fullChroma);
-    var guide  = self._hcqtGuideCache  ? new Float32Array(self._hcqtGuideCache)  : null;
-    var masked = self._hcqtMaskedCache ? new Float32Array(self._hcqtMaskedCache) : null;
+    _dlog(`[the tune model worker] init.modelFile=${modelFile ?? '(undefined)'} → chain: ${candidates.map(t => t.label).join(' → ')}`);
+    const postProgress = (loaded, total) => self.postMessage({ type: 'model-progress', loaded, total });
+    let buf = null;
+    let modelLabel = null;
+    for (const candidate of candidates) {
+        const { buf: b, reason, label } = candidate.kind === 'shards'
+            ? await fetchSharded(candidate, postProgress)
+            : await fetchSingle(candidate, postProgress);
+        if (b) {
+            buf = b;
+            modelLabel = label;
+            break;
+        }
+        _dlog(`[the tune model worker] ${candidate.label} unavailable: ${reason}`);
+    }
+    if (!buf) throw new Error(`exhausted model candidates: ${candidates.map(t => t.label).join(', ')}`);
+    _dlog(`[the tune model worker] loaded via ${modelLabel} (${buf.byteLength} bytes)`);
+    // After download, ORT spends ~1-3 s building the session (parsing
+    // the graph, initializing wasm execution provider, allocating
+    // tensors). Fire model-warming so the splash can update status
+    // during the otherwise-silent gap.
+    self.postMessage({ type: 'model-warming' });
+    _session = await self.ort.InferenceSession.create(
+        buf,
+        { executionProviders: ['wasm'], graphOptimizationLevel: 'all' },
+    );
+    _inputName  = _session.inputNames[0];
+    _outputName = _session.outputNames[0];
 
-    var transferList = [fullChroma.buffer, fullRawEnergy.buffer];
-    if (guide)  transferList.push(guide.buffer);
-    if (masked) transferList.push(masked.buffer);
+    /* ── Tonic sidecar (optional) ───────────────────────────────────────────
+     * A 1.6 MB conv net that reads the SAME fold12 tensor the recognition model
+     * consumes and emits absolute tonic pitch-class logits (index 0 = C). It is
+     * a separate model by necessity: our recognition input is KeyCanon-
+     * canonicalised, so absolute key is destroyed before the backbone sees it
+     * and no aux head on those weights could recover it.
+     *
+     * Wholly optional: any failure here leaves _tonicSession null and the whole
+     * feature simply does not run. It must never be able to stop tune ID. */
+    try {
+        const tonicUrl = `${_baseUrl}/tonic/tonic_sidecar_fp16.onnx${modelVersion ? `?v=${modelVersion}` : ''}`;
+        const tr = await fetch(tonicUrl);
+        if (tr.ok) {
+            _tonicSession = await self.ort.InferenceSession.create(
+                await tr.arrayBuffer(),
+                { executionProviders: ['wasm'], graphOptimizationLevel: 'all' },
+            );
+            _tonicInput = _tonicSession.inputNames[0];
+            _tonicOutput = _tonicSession.outputNames[0];
+            _dlog(`[tonic] sidecar ready (${_tonicInput} → ${_tonicOutput})`);
+        } else {
+            _dlog(`[tonic] sidecar unavailable: ${tr.status}`);
+        }
+    } catch (e) {
+        _dlog(`[tonic] sidecar failed to load: ${e && e.message}`);
+    }
 
-    self.postMessage({
-      type: 'result',
-      id: id,
-      chroma: fullChroma,
-      chromaFrames: hcqtFrames || nFrames,
-      rawEnergy: fullRawEnergy,
-      hcqtChroma: null,
-      hcqtGuide: guide,
-      hcqtMasked: masked,
-      hcqtFrames: hcqtFrames,
-      nFrames: nFrames,
-      nClasses: ensemble.nClasses,
-      ensembleAvg: ensemble.avg,
-      tempo: tempo,
-      keyNovelty: self._hcqtNovelty || 0,
-    }, transferList);
-    return;
-  }
+    const [lm, ti, cr] = await Promise.all([
+        fetchJson(`${_assetsBase}/label_map.json`),
+        fetchJson(`${_assetsBase}/tune_index.json`),
+        fetchJson(`${_assetsBase}/canonical_redirects.json`),
+    ]);
+    _labelMap = lm; _tuneIndex = ti; _redirects = cr;
+
+    /* Pre-allocate WASM scratch sized for MAX_BUF_SEC at inputSr (worst case). */
+    _nativeBufCap = MAX_BUF_SEC * _inputSr;
+    _nativeBufPtr = _wasm._malloc(_nativeBufCap * 4);
+    _resampledCap = _wasm._hcqt_fold12_resample_max_len(_inputSr, _nativeBufCap);
+    _resampledPtr = _wasm._malloc(_resampledCap * 4);
+    _tensorsPtr   = _wasm._malloc(_tensorsBytes);
+
+    ensureRing();
+}
+
+/* ── Per-cycle inference ────────────────────────────────────────────── */
+
+/* Per-window softmax scratch. Sized from the MODEL's actual class count, not a
+ * constant — the tune model emits 28 491 logits and #890 emits 28 494, and a short buffer
+ * fails SILENTLY here: out-of-bounds TypedArray writes are dropped, reads come
+ * back `undefined`, so the softmax denominator would miss the tail classes and
+ * `meanProbs[c] += undefined` would poison those entries with NaN. Grown on
+ * first use and whenever the width changes. */
+let _tmpProbs = new Float32Array(0);
+function ensureTmpProbs(n) {
+    if (_tmpProbs.length !== n) _tmpProbs = new Float32Array(n);
+    return _tmpProbs;
+}
+
+// Temperature for softening per-cycle predictions before they hit the
+// Markov posterior. the tune model's cosine-ArcFace head is ×64-scaled — vanilla
+// softmax peaks at 50-90 % on top-1 every cycle, including warmup
+// mis-picks. The Markov update then yanks the posterior toward the
+// (potentially wrong) top each cycle, producing rapid jumping before
+// the chain has enough evidence to settle. v6's 3-way ensemble blend
+// tempered this naturally; for the tune model we apply an explicit softening:
+// effectively divide logits by SOFTMAX_T so the per-cycle distribution
+// is gentler. Doesn't change the argmax — just gives the Markov chain
+// room to integrate evidence over a few cycles instead of overreacting
+// to each one.
+//
+// Tuning history:
+//   T=4 → top-1 5-15 %, obsQuality EMA pinned under 0.12 display gate
+//   T=2 → top-1 25-50 % in lab tests, but in real-room conditions the
+//         per-tune-MAX often dipped into the 5-10 % range, leaving the
+//         engine's CONFIDENCE_FLOOR=0.03 gate one bad cycle away from
+//         flipping to "noise" and abandoning the lock
+//   T=1.5 (current) → top-1 closer to 30-60 %, leaves comfortable
+//         headroom above CONFIDENCE_FLOOR so the lock survives the
+//         occasional weak cycle that's typical of mid-phrase audio
+//         (sustained note, breath, tail of a roll, etc.)
+// ⚠️ MODEL-SCOPED — supplied by the bundle at init (constants.ts MODEL_SOFTMAX_T),
+// because calibration belongs to the weights, not to this file. 1.5 is the tune model's
+// value and remains the fallback. #890 measured median top-1 0.994 at 1.5 (vs the
+// 30-60% this constant was chosen to produce), leaving the Markov chain no inertia
+// and making the lock flap on every instantaneous argmax change.
+let SOFTMAX_T = 1.5;
+
+function softmaxInPlace(arr) {
+    const invT = 1 / SOFTMAX_T;
+    let max = -Infinity;
+    for (let i = 0; i < arr.length; i++) {
+        arr[i] *= invT;
+        if (arr[i] > max) max = arr[i];
+    }
+    let sum = 0;
+    for (let i = 0; i < arr.length; i++) { arr[i] = Math.exp(arr[i] - max); sum += arr[i]; }
+    const inv = 1 / sum;
+    for (let i = 0; i < arr.length; i++) arr[i] *= inv;
+}
+
+/* Pre-computed dense ordering of canonical tune_ids (ascending). Both the
+ * worker's tuneProbs array and the engine's dense-Markov index use this
+ * same ordering — main thread reproduces it from tune_index.json.
+ *
+ * Also pre-builds `_classToDense[class_idx] = dense_tune_idx`, so the
+ * per-tune-MAX hot loop is a single n_classes-pass with no Map lookups. */
+let _denseTuneIds = null;       // Int32Array, length n_tunes (~22410)
+let _classToDense = null;       // Int32Array, length n_classes (362: 28 491, 890: 28 494)
+let _nTunes = 0;
+let _nClasses = 0;
+
+function buildDenseMaps() {
+    if (_denseTuneIds) return;
+    const tuneIds = Object.keys(_tuneIndex).map(Number).sort((a, b) => a - b);
+    _nTunes = tuneIds.length;
+    _denseTuneIds = new Int32Array(tuneIds);
+    const tidToDense = new Map();
+    for (let i = 0; i < _nTunes; i++) tidToDense.set(tuneIds[i], i);
+
+    const classKeys = Object.keys(_labelMap);
+    _nClasses = classKeys.length;
+    _classToDense = new Int32Array(_nClasses);
+    for (const cStr of classKeys) {
+        const ci = +cStr;
+        const tid = +_labelMap[cStr];
+        const dense = tidToDense.get(tid);
+        _classToDense[ci] = dense === undefined ? -1 : dense;
+    }
+}
+
+/* Compute per-tune-MAX probabilities (dense over canonical tune_ids).
+ * Hot loop, called every cycle — no allocations beyond the output. */
+function aggregatePerTuneMax(meanProbs, outTuneProbs) {
+    outTuneProbs.fill(0);
+    for (let ci = 0; ci < _nClasses; ci++) {
+        const d = _classToDense[ci];
+        if (d < 0) continue;
+        const p = meanProbs[ci];
+        if (p > outTuneProbs[d]) outTuneProbs[d] = p;
+    }
+}
+
+/* Walk the dense-per-tune array to pick out the top-K for display.
+ * Cheap (~22k pass with no allocations beyond the result). */
+function topKFromTuneProbs(tuneProbs, topK) {
+    const out = [];
+    const minScores = new Float32Array(topK);
+    const minIds = new Int32Array(topK);
+    let filled = 0;
+    let worstAt = 0;
+    let worstVal = -1;
+    for (let i = 0; i < _nTunes; i++) {
+        const v = tuneProbs[i];
+        if (filled < topK) {
+            minScores[filled] = v;
+            minIds[filled] = i;
+            filled++;
+            if (filled === topK) {
+                // Recompute worst slot
+                worstVal = minScores[0]; worstAt = 0;
+                for (let k = 1; k < topK; k++) if (minScores[k] < worstVal) { worstVal = minScores[k]; worstAt = k; }
+            }
+            continue;
+        }
+        if (v > worstVal) {
+            minScores[worstAt] = v;
+            minIds[worstAt] = i;
+            worstVal = minScores[0]; worstAt = 0;
+            for (let k = 1; k < topK; k++) if (minScores[k] < worstVal) { worstVal = minScores[k]; worstAt = k; }
+        }
+    }
+    // Sort descending and resolve to canonical metadata
+    const idxs = [];
+    for (let k = 0; k < filled; k++) idxs.push(k);
+    idxs.sort((a, b) => minScores[b] - minScores[a]);
+    for (const k of idxs) {
+        const tid = _denseTuneIds[minIds[k]];
+        const canon = _redirects[String(tid)] ?? tid;
+        const meta = _tuneIndex[String(canon)] ?? _tuneIndex[String(tid)] ?? {};
+        out.push({ tuneId: canon, score: minScores[k], name: meta.name ?? '?', type: meta.type ?? '?' });
+    }
+    return out;
+}
+
+async function processBuffer(droneSubtract) {
+    if (_ringLen <= 0) return null;
+
+    // Copy ring contents into the WASM native buffer.
+    _wasm.HEAPF32.set(_ring.subarray(0, _ringLen), _nativeBufPtr >> 2);
+
+    const t0 = self.performance ? self.performance.now() : Date.now();
+    const nWindows = _wasm._hcqt_fold12_native(
+        _inputSr,
+        _nativeBufPtr, _ringLen,
+        _resampledPtr, _resampledCap,
+        _tensorsPtr,   MAX_WINDOWS,
+    );
+    const dspMs = (self.performance ? self.performance.now() : Date.now()) - t0;
+    if (nWindows <= 0) return { topK: [], dspMs, infMs: 0, nWindows: 0 };
+
+    // Slice tensors out of the WASM heap (one copy — KeyCanon rotates in-place).
+    const tensors = new Float32Array(
+        _wasm.HEAPF32.buffer, _tensorsPtr, nWindows * TENSOR_SIZE
+    ).slice();
+
+    /* ── Tonic sidecar input — captured HERE, deliberately ──────────────────
+     * Its contract states drone subtraction MUST NOT be applied: the model was
+     * trained on plain fold12, and a sustained tonic is the single most
+     * informative feature it has, so subtracting one would be removing the
+     * signal. Our subtraction happens on the next line, hence the copy. It is
+     * ALSO pre-KeyCanon and G-based (bin 0 = G), which is exactly the frame the
+     * sidecar expects — `client_rotation_required: false` — so nothing is
+     * rotated on the way in or on the way out.
+     *
+     * One window only (the live path emits nWindows = 1); at ~2 ms a forward
+     * this is noise against a ~500 ms cadence, but batching every window would
+     * not be. */
+    const tonicInputTensor = _tonicSession && nWindows > 0
+        ? tensors.slice(0, TENSOR_SIZE)
+        : null;
+
+    // Stationary-drone floor subtraction (Settings toggle, default OFF) — remove a
+    // constant pitched tone (AC hum in one bin) from the fold12 tensors before the
+    // summary / display seq / KeyCanon / inference, so it cleans both the classifier
+    // input and the dot-matrix display chroma. Mirrors tune-model.native.ts §1b.
+    if (droneSubtract) subtractDroneFloor(tensors, nWindows);
+
+    // PRE-KeyCanon summary chroma (12-bin, averaged over all windows × all
+    // frames). Used by the engine's audio-key estimator — KeyCanon rotates
+    // the chroma away from the recording's actual key, so we capture this
+    // BEFORE applying KeyCanon. Worker emits in G-based fold12 order
+    // (bin 0 = G); pipeline.web.ts rotates G→C for the engine's C-based
+    // profiles.
+    const chromaSummary = new Float32Array(N_CHROMA);
+    // Dense PER-FRAME chroma sequence (bin-major: chromaSeq[c*totalFrames + frame])
+    // — the observation for the ensemble score-follower's chroma localizer. The
+    // model usually emits nWindows=1 of WINDOW_FRAMES frames, so the density lives
+    // in the frames, not the windows. Built in the SAME pass as the summary
+    // (reuses the data already in `tensors`, no extra STFT) and captured
+    // PRE-KeyCanon in G-based order; pipeline.web.ts rotates G→C.
+    const totalFrames = nWindows * WINDOW_FRAMES;
+    const chromaSeq = new Float32Array(N_CHROMA * totalFrames);
+    for (let w = 0; w < nWindows; w++) {
+        const wbase = w * TENSOR_SIZE;
+        for (let c = 0; c < N_CHROMA; c++) {
+            const cbase = wbase + c * WINDOW_FRAMES;
+            const dst = c * totalFrames + w * WINDOW_FRAMES;
+            let s = 0;
+            for (let f = 0; f < WINDOW_FRAMES; f++) {
+                const v = tensors[cbase + f];
+                chromaSeq[dst + f] = v;
+                s += v;
+            }
+            chromaSummary[c] += s;
+        }
+    }
+    {
+        const inv = 1 / (nWindows * WINDOW_FRAMES);
+        for (let c = 0; c < N_CHROMA; c++) chromaSummary[c] *= inv;
+    }
+
+    // ── Melodic-motion PEAK (noise/drone rejection) ──
+    // Per-frame dominant-note concentration: max/sum × N_CHROMA over each fine
+    // frame, averaged. AC/HVAC/fan noise has a FLAT chroma (no dominant note →
+    // peak ~1) even though it's tonal enough to pass the flatness gate; real
+    // melody has ONE clear note per frame (peak high). Validated on real
+    // app-captured audio: AC ~1.8, pipes-over-AC ~4.6. Gates out the trash-tune
+    // hallucination downstream (useTuneIdentifier). Computed on the fine
+    // pre-KeyCanon chroma (chromaSeq), which lives only in the worker on web.
+    let _mpSum = 0, _mpN = 0;
+    for (let f = 0; f < totalFrames; f++) {
+        let s = 0, mx = 0;
+        for (let c = 0; c < N_CHROMA; c++) { const v = chromaSeq[c * totalFrames + f]; s += v; if (v > mx) mx = v; }
+        if (s > 1e-9) { _mpSum += (mx / s) * N_CHROMA; _mpN++; }
+    }
+    const melodicPeak = _mpN > 0 ? _mpSum / _mpN : 0;
+
+    for (let w = 0; w < nWindows; w++) {
+        applyKeycanonInPlace(
+            tensors.subarray(w * TENSOR_SIZE, (w + 1) * TENSOR_SIZE),
+            WINDOW_FRAMES,
+        );
+    }
+
+    const t1 = self.performance ? self.performance.now() : Date.now();
+    const inputTensor = new self.ort.Tensor('float32', tensors, [nWindows, N_CHROMA, WINDOW_FRAMES]);
+    const out = await _session.run({ [_inputName]: inputTensor });
+    const infMs = (self.performance ? self.performance.now() : Date.now()) - t1;
+    const logits = out[_outputName].data;
+    const nClasses = logits.length / nWindows;
+
+    /* Per-window softmax → mean across windows */
+    /* Per-window MAX COSINE — the abstention signal.
+     * The head emits 64*(e-hat . W-hat), so dividing the top logit by 64 recovers
+     * the raw cosine. It is TEMPERATURE-INDEPENDENT, which is what makes it useful:
+     * every softmax-derived confidence we have moves when SOFTMAX_T moves, and the
+     * Markov posterior downstream concentrates by design, so neither can say "the
+     * model is unsure". Cosine can. Training-side AUROC right-vs-wrong window is
+     * ~0.90 across 362/879/890 (shared scale), with maxcos >= 0.26 keeping 82.5% of
+     * right windows while rejecting 85% of wrong ones. */
+    const ARCFACE_SCALE = 64;
+    const winMaxCos = new Float32Array(nWindows);
+    /* Top-5 (classIdx, cosine) per window — diagnostic payload so a confusion can
+     * be checked against the cosine scale offline (mailbox seq 297 asked for
+     * exactly this on the Bucks->Greig's windows). */
+    const winTopCos = [];
+
+    const meanProbs = new Float32Array(nClasses);
+    const tmpProbs = ensureTmpProbs(nClasses);
+    for (let w = 0; w < nWindows; w++) {
+        const base = w * nClasses;
+        let mx = -Infinity;
+        for (let c = 0; c < nClasses; c++) { const v = logits[base + c]; if (v > mx) mx = v; }
+        winMaxCos[w] = mx / ARCFACE_SCALE;
+        // Cheap top-5 without sorting 28k entries.
+        const best = [];
+        for (let c = 0; c < nClasses; c++) {
+            const v = logits[base + c];
+            if (best.length < 5) { best.push([c, v]); if (best.length === 5) best.sort((a, b) => b[1] - a[1]); }
+            else if (v > best[4][1]) {
+                best[4] = [c, v];
+                for (let i = 4; i > 0 && best[i][1] > best[i - 1][1]; i--) { const t = best[i]; best[i] = best[i - 1]; best[i - 1] = t; }
+            }
+        }
+        winTopCos.push(best.map(([c, v]) => ({ c, cos: +(v / ARCFACE_SCALE).toFixed(4) })));
+
+        for (let c = 0; c < nClasses; c++) tmpProbs[c] = logits[base + c];
+        softmaxInPlace(tmpProbs);
+        for (let c = 0; c < nClasses; c++) meanProbs[c] += tmpProbs[c];
+    }
+    const invNW = 1 / nWindows;
+    for (let c = 0; c < nClasses; c++) meanProbs[c] *= invNW;
+
+    buildDenseMaps();
+    const tuneProbs = new Float32Array(_nTunes);
+    aggregatePerTuneMax(meanProbs, tuneProbs);
+    const topK = topKFromTuneProbs(tuneProbs, TOP_K);
+
+    /* Tonic sidecar forward. Failure is swallowed: a broken key hint must never
+     * take down tune identification, which is what the app is for. */
+    let tonic = null;
+    if (tonicInputTensor) {
+        try {
+            const out = await _tonicSession.run({
+                [_tonicInput]: new self.ort.Tensor('float32', tonicInputTensor, [1, N_CHROMA, WINDOW_FRAMES]),
+            });
+            const logits = out[_tonicOutput].data;
+            // Softmax over the 12 absolute pitch classes (index 0 = C).
+            let mx = -Infinity;
+            for (let i = 0; i < N_CHROMA; i++) if (logits[i] > mx) mx = logits[i];
+            const probs = new Array(N_CHROMA);
+            let sum = 0;
+            for (let i = 0; i < N_CHROMA; i++) { const e = Math.exp(logits[i] - mx); probs[i] = e; sum += e; }
+            for (let i = 0; i < N_CHROMA; i++) probs[i] /= sum;
+            tonic = probs;
+        } catch (e) {
+            _dlog(`[tonic] forward failed: ${e && e.message}`);
+        }
+    }
+
+    return { topK, tuneProbs, chromaSummary, chromaSeq, dspMs, infMs, nWindows, melodicPeak, winMaxCos, winTopCos, tonic };
+}
+
+/* ── Message dispatch ────────────────────────────────────────────────── */
+
+self.onmessage = async (e) => {
+    const msg = e.data || {};
+    try {
+        if (msg.type === 'init') {
+            await init(msg);
+            self.postMessage({ type: 'ready' });
+            return;
+        }
+        if (msg.type === 'reset') {
+            _ringLen = 0;
+            self.postMessage({ type: 'reset-ok' });
+            return;
+        }
+        if (msg.type === 'process') {
+            if (!_wasm || !_session) throw new Error('not initialized');
+            const samples = new Float32Array(msg.samples);
+            if (msg.replaceBuffer) _ringLen = 0;
+            appendSamples(samples);
+            const result = await processBuffer(!!msg.droneSubtract);
+            if (!result) { self.postMessage({ type: 'result', topK: [], dspMs: 0, infMs: 0, nWindows: 0, bufferSec: 0 }); return; }
+            // Transfer the dense per-tune-probs + chroma summary ArrayBuffers
+            // to avoid copies on the wire — the worker drops its references,
+            // the main thread receives fresh Float32Arrays of the same data.
+            const tuneProbsBuf = result.tuneProbs ? result.tuneProbs.buffer : null;
+            const chromaBuf    = result.chromaSummary ? result.chromaSummary.buffer : null;
+            const chromaSeqBuf = result.chromaSeq ? result.chromaSeq.buffer : null;
+            const transfer = [];
+            if (tuneProbsBuf) transfer.push(tuneProbsBuf);
+            if (chromaBuf)    transfer.push(chromaBuf);
+            if (chromaSeqBuf) transfer.push(chromaSeqBuf);
+            self.postMessage(
+                {
+                    type: 'result',
+                    topK: result.topK,
+                    winMaxCos: result.winMaxCos ? Array.from(result.winMaxCos) : [],
+                    winTopCos: result.winTopCos ?? [],
+                    tuneProbs: tuneProbsBuf,
+                    chromaSummary: chromaBuf,
+                    chromaSeq: chromaSeqBuf,
+                    dspMs: result.dspMs,
+                    infMs: result.infMs,
+                    nWindows: result.nWindows,
+                    melodicPeak: result.melodicPeak,
+                    // ⚠️ This message is built field-by-field, so anything added to
+                    // processBuffer's return value is DROPPED here unless it is also
+                    // listed. The tonic sidecar was computed and silently discarded
+                    // exactly that way — it presented as "the sidecar never ran".
+                    tonic: result.tonic ?? null,
+                    bufferSec: _ringLen / _inputSr,
+                },
+                transfer.length > 0 ? transfer : undefined,
+            );
+            return;
+        }
+        self.postMessage({ type: 'unknown', received: msg.type });
+    } catch (err) {
+        self.postMessage({
+            type: msg.type === 'init' ? 'init-error' : 'process-error',
+            error: err?.message ?? String(err),
+            stack: err?.stack,
+        });
+    }
 };

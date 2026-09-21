@@ -184,7 +184,7 @@ self.onmessage = async function(e) {
       var resp = await fetch(modelUrl);
       // Stream the body so the splash's unified progress bar can show this
       // 38MB download advancing (a plain arrayBuffer() gives no signal). Post
-      // {loaded,total} the same way dsp-worker-362 does. Falls back to
+      // {loaded,total} the same way dsp-worker does. Falls back to
       // arrayBuffer() if the body isn't a readable stream.
       var buf;
       var total = +(resp.headers.get('content-length') || 0);

@@ -1,6 +1,6 @@
 /**
  * basic-pitch-worker-onnx.js — WEB Basic Pitch via onnxruntime-web (ORT 1.18, same ort.min.js the
- * #362 worker uses). The A/B alternative to the TF.js worker (basic-pitch-worker.js), enabled by
+ * the tune model worker uses). The A/B alternative to the TF.js worker (basic-pitch-worker.js), enabled by
  * ?bponnx=1. The whole point is PARITY: it runs the SAME tf2onnx-converted graph (basic_pitch.onnx)
  * that the NATIVE iOS/Android path runs (src/search/basic-pitch-session.ts), with byte-identical
  * windowing — so web and native produce the same note transcription, killing the BP engine
