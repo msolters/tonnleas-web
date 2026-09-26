@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="%LANG_ISO_CODE%">
   <head>
     <meta charset="utf-8" />
     <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
@@ -161,7 +161,7 @@
          request, no webfont, no layout shift once the app takes over. */
       body { background: #0A0E0D; }
     </style>
-  <link rel="icon" href="/favicon.ico" /></head>
+  </head>
 
   <body>
     <!-- Use static rendering with Expo Router to support running without JavaScript. -->
@@ -178,7 +178,6 @@
         needs no internet connection at all.
       </p>
       <p>
-        <a href="/what-tune-is-this.html">How JigRipper identifies a tune</a> ·
         <a href="/support.html">Support</a> ·
         <a href="/privacy">Privacy</a>
       </p>
@@ -193,9 +192,11 @@
 
          The crawlable text has two better homes that cost nothing visually:
          the <noscript> block above (parsed by crawlers, never rendered for
-         anyone with JavaScript) and what-tune-is-this.html, a genuinely static
-         page. Content here would in any case be discarded on hydration, so
+         anyone with JavaScript). what-tune-is-this.html used to be the other
+         home for it and was removed 2026-09-26 at the operator's request, so the
+         noscript block above is now the ONLY crawlable prose on this page — do
+         not delete it. Content inside #root would in any case be discarded on
+         hydration, so
          Google's renderer never sees it either. -->
-  <script src="/_expo/static/js/web/index-a7e5212d3606d7c62f553f74bebb5502.js" defer></script>
-</body>
+  </body>
 </html>
