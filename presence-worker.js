@@ -53,6 +53,11 @@ var RELAY_URL = WORKER_DEV ? 'http://' + self.location.hostname + ':8124/log' : 
 function wlog(m) {
   if (!WORKER_DEV) return;
   try { console.log('[presence-worker]', m); } catch (_) {}
+  // Also emit on the message channel. A worker's console output does not reach
+  // the page's console reader, so a worker that stalls mid-init is completely
+  // silent from outside — which cost three debugging rounds. The `log` type is
+  // already in this file's protocol header; it was simply never sent.
+  try { self.postMessage({ type: 'log', msg: m }); } catch (_) {}
   try {
     fetch(RELAY_URL, {
       method: 'POST',
@@ -109,6 +114,12 @@ function fft(re, im, n) {
   }
 }
 
+var cfgSession = null;      // v16 ensemble-config head (optional second model)
+var cfgSets = null;         // index -> member names
+var cfgMusic = null;        // config indices containing >=1 instrument (the GATE)
+var cfgSetsIdx = null;      // index -> member CLASS INDICES (never match by name:
+                            // the app calls class 6 "strings", the vocab calls it
+                            // "plucked", and a name compare silently never matched)
 var _hann = null;
 function getHann() {
   if (_hann && _hann.length === SEP_N_FFT) return _hann;
@@ -116,6 +127,12 @@ function getHann() {
   for (var i = 0; i < SEP_N_FFT; i++) _hann[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / SEP_N_FFT));
   return _hann;
 }
+
+// ⚠️ NO equal-RMS step here any more. The config head is now a SELF-NORMALIZING
+// export: it normalizes internally, so it takes the very same peak-0.5 magnitude
+// the mask model gets. One STFT, two inferences. The earlier build carried a
+// second normalization AND a second STFT because the head required RMS-0.05 on
+// the raw window; both are gone.
 
 // center=true STFT, magnitude only: reflect-pad by N_FFT/2 each side.
 // Returns frame-major mag[f * SEP_BINS + b].
@@ -179,41 +196,74 @@ self.onmessage = async function(e) {
       // instant repeat-load and still guarantees a fresh fetch after a model swap
       // (the earlier stale/partial-cache corruption was a same-URL swap; ?v= fixes
       // that without re-downloading every time).
+      // ── CONFIG-ONLY MODE ───────────────────────────────────────────────
+      // When a config head is supplied it owns EVERYTHING: instrument names and
+      // the music/no-music gate. The old mask model is then dead weight — a
+      // second full trunk inference per hop for a readout nothing consumes — so
+      // we do not load it at all. Halves presence CPU on web, which matters
+      // because web cadence is itself a suspect in the identification work.
+      var configOnly = !!msg.configModelUrl;
       var modelUrl = msg.modelUrl || (msg.baseUrl + '/instrument_presence.onnx' + modelV);
-      wlog('init: ort loaded, fetching ' + modelUrl);
+      wlog('init: ort loaded' + (configOnly ? ' — CONFIG-ONLY (mask model not loaded)'
+                                            : ', fetching ' + modelUrl));
+      if (!configOnly) {
       var resp = await fetch(modelUrl);
-      // Stream the body so the splash's unified progress bar can show this
-      // 38MB download advancing (a plain arrayBuffer() gives no signal). Post
-      // {loaded,total} the same way dsp-worker does. Falls back to
-      // arrayBuffer() if the body isn't a readable stream.
-      var buf;
-      var total = +(resp.headers.get('content-length') || 0);
-      if (resp.body && resp.body.getReader) {
-        var reader = resp.body.getReader();
-        var chunks = [], loaded = 0;
-        for (;;) {
-          var rd = await reader.read();
-          if (rd.done) break;
-          chunks.push(rd.value);
-          loaded += rd.value.length;
-          self.postMessage({ type: 'model-progress', loaded: loaded, total: total });
+        // Stream the body so the splash's unified progress bar can show this
+        // 38MB download advancing (a plain arrayBuffer() gives no signal). Post
+        // {loaded,total} the same way dsp-worker does. Falls back to
+        // arrayBuffer() if the body isn't a readable stream.
+        var buf;
+        var total = +(resp.headers.get('content-length') || 0);
+        if (resp.body && resp.body.getReader) {
+          var reader = resp.body.getReader();
+          var chunks = [], loaded = 0;
+          for (;;) {
+            var rd = await reader.read();
+            if (rd.done) break;
+            chunks.push(rd.value);
+            loaded += rd.value.length;
+            self.postMessage({ type: 'model-progress', loaded: loaded, total: total });
+          }
+          var merged = new Uint8Array(loaded), moff = 0;
+          for (var mi = 0; mi < chunks.length; mi++) { merged.set(chunks[mi], moff); moff += chunks[mi].length; }
+          buf = merged.buffer;
+        } else {
+          buf = await resp.arrayBuffer();
+          self.postMessage({ type: 'model-progress', loaded: buf.byteLength, total: buf.byteLength || total });
         }
-        var merged = new Uint8Array(loaded), moff = 0;
-        for (var mi = 0; mi < chunks.length; mi++) { merged.set(chunks[mi], moff); moff += chunks[mi].length; }
-        buf = merged.buffer;
-      } else {
-        buf = await resp.arrayBuffer();
-        self.postMessage({ type: 'model-progress', loaded: buf.byteLength, total: buf.byteLength || total });
+        wlog('model fetched ' + buf.byteLength + ' bytes; creating session…');
+        // graphOptimizationLevel 'all' hangs onnxruntime-web 1.18.0 on the v2-core
+        // CNN presence graph (fuses Conv/BN into ops the WASM build can't finalize)
+        // — the load never resolves → fresh=0 → no suppression. 'basic' loads fine.
+        session = await ort.InferenceSession.create(buf, {
+          executionProviders: ['wasm'],
+          graphOptimizationLevel: 'basic',
+        });
+        wlog('session created OK (inputs=' + (session.inputNames||[]) + ') — ready');
       }
-      wlog('model fetched ' + buf.byteLength + ' bytes; creating session…');
-      // graphOptimizationLevel 'all' hangs onnxruntime-web 1.18.0 on the v2-core
-      // CNN presence graph (fuses Conv/BN into ops the WASM build can't finalize)
-      // — the load never resolves → fresh=0 → no suppression. 'basic' loads fine.
-      session = await ort.InferenceSession.create(buf, {
-        executionProviders: ['wasm'],
-        graphOptimizationLevel: 'basic',
-      });
-      wlog('session created OK (inputs=' + (session.inputNames||[]) + ') — ready');
+
+      // v16 ensemble-config head. In config-only mode this is the ONLY model.
+      if (msg.configModelUrl) {
+        try {
+          wlog('config: fetching vocab ' + msg.configVocabUrl);
+          var vres = await fetch(msg.configVocabUrl);
+          var vj = await vres.json();
+          cfgSets = vj.sets; cfgMusic = vj.music; cfgSetsIdx = vj.setsIdx;
+          wlog('config: vocab ok (' + (vj.sets ? vj.sets.length : '?') + ' sets, setsIdx='
+               + (vj.setsIdx ? 'yes' : 'NO') + '); fetching model');
+          var cres = await fetch(msg.configModelUrl);
+          var cbuf = new Uint8Array(await cres.arrayBuffer());
+          wlog('config: model bytes ' + cbuf.length + ' — creating session');
+          cfgSession = await ort.InferenceSession.create(cbuf, {
+            executionProviders: ['wasm'], graphOptimizationLevel: 'basic',
+          });
+          wlog('config head loaded: ' + cfgSets.length + ' configs, '
+               + cfgMusic.length + ' music (gate), outputs=' + (cfgSession.outputNames||[]));
+        } catch (e) {
+          cfgSession = null;
+          wlog('config head load FAILED (mask path unaffected): ' + ((e && e.message) || String(e)));
+        }
+      }
       self.postMessage({ type: 'model-loaded' });
     } catch (err) {
       wlog('model LOAD failed: ' + ((err && err.message) || String(err)));
@@ -222,22 +272,55 @@ self.onmessage = async function(e) {
     return;
   }
   if (msg.type === 'process') {
-    if (!session) {
-      self.postMessage({ type: 'result', id: msg.id, presence: null });
+    if (!session && !cfgSession) {
+      self.postMessage({ type: 'result', id: msg.id, presence: null, config: null });
       return;
     }
     try {
       var stft = stftMag(msg.samples);
       var inputTensor = new ort.Tensor('float32', stft.mag, [1, stft.nFrames, SEP_BINS]);
+      var presence = null;
+      if (session) {
       // Bind by the session's ACTUAL input name — the 10-class head used "mag",
       // the [1,11] noise head uses "magnitude". Dynamic keeps both working.
       var inName = (session.inputNames && session.inputNames[0]) || 'magnitude';
       var feeds = {}; feeds[inName] = inputTensor;
       var outMap = await session.run(feeds);
       var out = outMap.presence || outMap[Object.keys(outMap)[0]];
-      var presence = new Float32Array(out.data);
+      presence = new Float32Array(out.data);
       if (!self._loggedFirstRun) { self._loggedFirstRun = true; wlog('first inference OK, presence[' + presence.length + '] noise=' + presence[10]); }
-      self.postMessage({ type: 'result', id: msg.id, presence: presence }, [presence.buffer]);
+      }
+
+      // ── config head, on the RAW window at its own normalization ──────────
+      var cfg = null;
+      if (cfgSession) {
+        try {
+          // SAME inputTensor as the mask model — self-norm, one STFT.
+          var cfeeds = {};
+          cfeeds[(cfgSession.inputNames && cfgSession.inputNames[0]) || 'magnitude'] = inputTensor;
+          var cmap = await cfgSession.run(cfeeds);
+          var cp = (cmap.config_probs || cmap[Object.keys(cmap)[0]]).data;
+          // Plain argmax over ALL 253 configs. No masking: harp is gone at source
+          // in this vocabulary, and {noise} must remain reachable — it IS the
+          // non-music answer and masking it would destroy the gate.
+          var bi = 0;
+          for (var ci = 1; ci < cp.length; ci++) if (cp[ci] > cp[bi]) bi = ci;
+          // THRESHOLD-FREE GATE: open iff the winning config names an instrument.
+          // {noise} (index 22) is the sole non-music config -> gate closed.
+          cfg = { idx: bi, prob: cp[bi], members: cfgSets[bi] || [],
+                  membersIdx: cfgSetsIdx[bi] || [],
+                  gateOpen: cfgMusic.indexOf(bi) !== -1 };
+          if (!self._loggedFirstCfg) {
+            self._loggedFirstCfg = true;
+            wlog('first config call OK: [' + cfg.members.join(' ') + '] p=' + cfg.prob.toFixed(3)
+                 + ' gate=' + (cfg.gateOpen ? 'OPEN' : 'CLOSED'));
+          }
+        } catch (e) {
+          if (!self._loggedCfgErr) { self._loggedCfgErr = true; wlog('config run failed: ' + ((e && e.message) || String(e))); }
+        }
+      }
+      self.postMessage({ type: 'result', id: msg.id, presence: presence, config: cfg },
+                       presence ? [presence.buffer] : []);
     } catch (err) {
       wlog('run failed: ' + ((err && err.message) || String(err)));
       self.postMessage({ type: 'result', id: msg.id, presence: null, error: (err && err.message) || String(err) });
