@@ -250,15 +250,22 @@ dl.controls dd { margin: var(--f1) 0 0; color: var(--muted); }
 .ui-pill.on    { background: rgba(143, 191, 160, 0.18); border-color: rgba(143, 191, 160, 0.55); color: #E8F4EC; }
 .ui-pill.done  { border-color: rgba(143, 191, 160, 0.14); color: var(--muted); }
 .ui-pill.armed { border-color: rgba(220, 120, 110, 0.60); background: rgba(220, 120, 110, 0.12); color: #E8A39A; }
+/* The library menus' pills (Current session, Sets, Sessions, the ABC panel) —
+   menu-style.ts in the app: no fill, a fully round end, GOLD when selected.
+   ⚠️ Keep these in step with the app: when a control's look changes there, it
+   changes here (operator, 2026-10-08). */
+.ui-pill.m     { background: transparent; border-color: rgba(143, 191, 160, 0.34); border-radius: 1.1em; padding: 0 0.85em; }
+.ui-pill.m.sel { border-color: rgba(201, 168, 76, 0.60); background: rgba(201, 168, 76, 0.10); color: var(--gold); }
 .ui-btn {                                  /* rectangular buttons: Replace with…, Delete, + Add tune … */
   display: inline-block; padding: 0 0.7em;
-  border: 1px solid rgba(143, 191, 160, 0.28); border-radius: 0.45em;
-  background: rgba(143, 191, 160, 0.06);
+  border: 1px solid rgba(143, 191, 160, 0.26); border-radius: 0.87em;   /* the app's 13 px at 15 px type */
+  background: rgba(143, 191, 160, 0.05);
   color: var(--text); font-size: 0.9em; font-weight: 400; line-height: 1.6; white-space: nowrap;
 }
 .ui-btn.gold    { border-color: rgba(201, 168, 76, 0.55); background: transparent; color: var(--gold); }
 .ui-btn.fill    { border-color: var(--gold); background: var(--gold); color: var(--ground); font-weight: 500; }
 .ui-btn.outline { border-color: var(--silver); background: transparent; color: var(--silver); }
+.glyph.abc { font-size: 0.62em; font-weight: 600; letter-spacing: 0.04em; }   /* the ABC button's small capitals */
 .glyph.inline {                            /* the round icon buttons, at text size */
   width: 1.65em; height: 1.65em; font-size: 0.85em;
   vertical-align: 0.06em; margin: 0 0.08em;
@@ -909,8 +916,20 @@ nav.toc li li a { color: var(--muted); }
   <dt><span class="glyph" aria-hidden="true">◇</span> Save this tune</dt>
   <dd>Keeps the tune in your collection. The diamond fills in — <span class="glyph inline">◆</span> — once saved. Tap it again to remove it.</dd>
 
+  <dt><span class="glyph abc" aria-hidden="true">ABC</span> Show the ABC</dt>
+  <dd>
+    The tune's notation as ABC text — the setting on screen, as a complete tune
+    you can paste into any ABC program. <span class="ui-pill m sel">copy ABC</span> copies it;
+    you can also select just part of it.
+    <figure class="plate">
+      <img src="img/abc-panel.png" width="812" height="750"
+           alt="A panel headed ABC, The Kesh. Under it the tune as text: X: 1, T: The Kesh, R: jig, M: 6/8, L: 1/8, K: Gmajor, then four lines of notes. At the bottom, a gold copy ABC button and a close button.">
+      <figcaption>The ABC for The Kesh.</figcaption>
+    </figure>
+  </dd>
+
   <dt><span class="glyph" aria-hidden="true">↗</span> Open on thesession.org</dt>
-  <dd>Opens the tune's page on thesession.org, where the music came from.</dd>
+  <dd>Opens the tune's page on thesession.org, where the music came from. To have it open by itself for each new tune, see <a href="#settings">thesession.org: auto-open</a>.</dd>
 
   <dt><span class="glyph" aria-hidden="true">▢</span> Full screen</dt>
   <dd>A small outlined square, in the smaller sheet only. In full screen its place is taken by <span class="glyph inline">×</span>, which closes.</dd>
@@ -1023,7 +1042,7 @@ nav.toc li li a { color: var(--muted); }
 
 <figure class="plate">
   <img src="img/edit-sessions-list.png" width="600" height="500"
-       alt="The Sessions list. One session reads Tue Oct 6, 7:30–8:31pm, then 3 sets · 8 tunes · 1h 1m, then its tunes in italics, then the words share and copy.">
+       alt="The Sessions list. One session, marked by a thin line down its left side, reads Tue Oct 6, 7:30–8:31pm, then 3 sets · 8 tunes · 1h 1m, then its tunes, then three buttons: share, rename and delete.">
   <figcaption>Each session shows when it ran — first tune to last — then its sets, tunes and length.</figcaption>
 </figure>
 
@@ -1033,21 +1052,29 @@ nav.toc li li a { color: var(--muted); }
   <a href="#editing">Current session</a> list opens beside it.
 </p>
 
+<p>The session you have open is marked with a gold line.</p>
+
 <dl class="controls">
-  <dt><span class="ui-pill">share</span></dt>
+  <dt><span class="ui-pill m">share</span></dt>
   <dd>Hands the session to whatever you normally share with — messages, mail,
-      notes. On a desktop browser that cannot share, it copies to the clipboard instead.</dd>
-  <dt><span class="ui-pill">copy</span></dt>
-  <dd>Copies the session straight to the clipboard as plain text.</dd>
+      notes, or Copy. On a desktop browser that cannot share, it copies to the
+      clipboard instead, and reads <span class="ui-pill m">copied ✓</span>.</dd>
+  <dt><span class="ui-pill m">rename</span></dt>
+  <dd>Type the new name, then press <span class="ui-pill m sel">save</span> (or Done, or tap anywhere else).
+      Pressing and holding the session does the same.</dd>
+  <dt><span class="ui-pill m">delete</span></dt>
+  <dd>Press it, then press <span class="ui-pill m armed">tap again to delete</span> — the second
+      press deletes the session. Leave it a few seconds and it goes back to
+      <span class="ui-pill m">delete</span>.</dd>
 </dl>
 
-<p>Either way you get something like this, ready to paste anywhere:</p>
+<p>Sharing gives you something like this, ready to paste anywhere:</p>
 
 <ul>
   <li>when the session ran — its first tune to its last — then how many sets and
       tunes, and how long;</li>
-  <li>the tunes grouped into sets — runs played back to back — with the time each
-      set started;</li>
+  <li>the tunes grouped into sets — runs played back to back — with when each set
+      started and ended;</li>
   <li>a thesession.org link under every tune.</li>
 </ul>
 
@@ -1063,8 +1090,6 @@ nav.toc li li a { color: var(--muted); }
 </p>
 
 <p>
-  To rename a session, press and hold its name and type a new one. The
-  <span class="glyph inline">×</span> deletes it — <strong>immediately, with no confirmation.</strong>
   JigRipper keeps up to fifty sessions and will not throw away an old one to make
   room for a new one; if you reach the limit it says so, and you delete one yourself.
 </p>
@@ -1091,7 +1116,7 @@ nav.toc li li a { color: var(--muted); }
 
 <p>
   A set is a few tunes you play back to back. Keep the ones you play often here,
-  build new ones, and <span class="ui-pill">select</span> one before you play it — JigRipper
+  build new ones, and <span class="ui-pill m">select</span> one before you play it — JigRipper
   then keeps its music to hand and uses it to recognise each next tune sooner.
   How to do each is under <a href="#editing">Editing sessions and sets</a>.
 </p>
@@ -1123,8 +1148,8 @@ nav.toc li li a { color: var(--muted); }
 <h3 id="current-session">The current session</h3>
 
 <figure class="plate">
-  <img src="img/edit-session-drawer.png" width="600" height="1258"
-       alt="A panel headed CURRENT SESSION. Under it: Tue Oct 6, 7:30–8:31pm; 3 sets · 8 tunes; Tap a tune to find it in the river. Hold a tune to edit it. Then two boxed sets, SET 1 — 7:30 PM and SET 2 — 7:55 PM, each with select and save to my sets buttons and a list of tunes with their type and key, each tune followed by three dots.">
+  <img src="img/edit-session-drawer.png" width="600" height="1224"
+       alt="A panel headed CURRENT SESSION. Under it: Tue Oct 6, 7:30–8:31pm; 3 sets · 8 tunes; and, small and set apart, three dots or hold a tune to edit. Then two sets, each marked by a thin line down its left side: SET 1 7:30–7:42pm and SET 2 7:55–8:04pm, each listing its tunes with their type and key and three dots, then its buttons — select, and save to my sets (set 1 reads in my sets instead).">
   <figcaption>The river as a set list. Set 2 has a tune in it that nobody played.</figcaption>
 </figure>
 
@@ -1136,8 +1161,12 @@ nav.toc li li a { color: var(--muted); }
   opened; loading a session opens it for you.
 </p>
 
+<p>Each set shows when it started and ended.</p>
+
 <ul>
-  <li><strong>Tap a tune</strong> to close the panel and scroll the river to where it starts.</li>
+  <li><strong>Tap a tune</strong> to close the panel and scroll the river to where it
+      starts. When you are not listening, its music opens too, and its name turns
+      gold in the list.</li>
   <li><strong>Tap</strong> <span class="glyph inline">⋯</span> beside a tune, or press and hold it, to edit it.</li>
 </ul>
 </div>
@@ -1152,7 +1181,7 @@ nav.toc li li a { color: var(--muted); }
       and hold its name in the river itself (right-click it on a computer).
     </p>
     <figure class="sliver">
-      <img src="img/edit-tune-menu.png" width="812" height="604"
+      <img src="img/edit-tune-menu.png" width="812" height="650"
            alt="A card titled Banish Misfortune, with jig · D Mixolydian · 7:58 PM · 3 min under it, and three buttons: Replace with…, Start new set here, and Delete. Beneath them: This edits the saved session. It can't be undone. Then Cancel.">
       <figcaption>The card names the tune, its key, when it started and how long it ran.</figcaption>
     </figure>
@@ -1164,7 +1193,7 @@ nav.toc li li a { color: var(--muted); }
       played in.
     </p>
     <figure class="sliver">
-      <img src="img/edit-tune-replace.png" width="812" height="470"
+      <img src="img/edit-tune-replace.png" width="812" height="490"
            alt="The same card with a search box containing out on the ocean, and one result below it: Out On The Ocean, jig.">
       <figcaption>Search works the way the main search does — "the kesh" finds The Kesh.</figcaption>
     </figure>
@@ -1198,7 +1227,7 @@ nav.toc li li a { color: var(--muted); }
 <h3 id="regroup">Moving where a set starts or ends</h3>
 
 <figure class="sliver">
-  <img src="img/edit-tune-menu-sets.png" width="812" height="704"
+  <img src="img/edit-tune-menu-sets.png" width="812" height="756"
        alt="A card titled The Kesh, jig · G · 7:55 PM · 3 min, with buttons Replace with…, Move to previous set, Join previous set, and Delete, then the note This edits the saved session. It can't be undone, and Cancel.">
   <figcaption>The first tune of a set offers to move it back into the set before.</figcaption>
 </figure>
@@ -1230,10 +1259,11 @@ nav.toc li li a { color: var(--muted); }
 <h3 id="keep-set">Keeping a set</h3>
 
 <p>
-  Each set in the current session has two buttons. <span class="ui-pill">save to my sets</span>
-  copies it into your <a href="#library">sets</a>, named after its tunes; it then
-  reads <span class="ui-pill done">in my sets ✓</span>. <span class="ui-pill">select</span> plays from it — see
-  <a href="#play-set">Playing from a set</a>.
+  Under each set's tunes are two buttons. <span class="ui-pill m">save to my sets</span>
+  copies it into your <a href="#library">sets</a>, named after its tunes; the
+  button then gives way to <span class="ui-text">✓ in my sets</span>. <span class="ui-pill m">select</span> plays
+  from it — see <a href="#play-set">Playing from a set</a>; while it is selected,
+  the button reads <span class="ui-pill m sel">selected ✓</span> and the set's line turns gold.
 </p>
 </div>
 
@@ -1242,23 +1272,23 @@ nav.toc li li a { color: var(--muted); }
 
 <figure class="plate">
   <img src="img/edit-sets-list.png" width="600" height="660"
-       alt="The Sets panel: a + New set button and a From river button, then two sets. The first is The Kesh / Out On The Ocean / Morrison's with its tunes listed under it; the second is Tuesday reels with Silver Spear, The · Drowsy Maggie. Each has three buttons: select, rename and delete.">
+       alt="The Sets panel: a + New set button and a From river button, then two sets, each marked by a thin line down its left side. The first is The Kesh / Out On The Ocean / Morrison's with its tunes listed under it; the second is Tuesday reels with The Silver Spear · Drowsy Maggie. Each has three buttons: select, rename and delete.">
   <figcaption>Open <span class="ui-pill">sets</span> from the search bar (or <span class="ui-pill">library ▾</span>).</figcaption>
 </figure>
 
 <dl class="controls">
-  <dt><span class="ui-pill">select</span></dt>
-  <dd>Plays from this set — see <a href="#play-set">Playing from a set</a>. It reads <span class="ui-pill on">selected ✓</span> while it is.</dd>
-  <dt><span class="ui-pill">rename</span></dt>
-  <dd>Type the new name, then press <span class="ui-pill">save</span> (or Done, or tap anywhere else).</dd>
-  <dt><span class="ui-pill">delete</span></dt>
-  <dd>Press it, then press <span class="ui-pill armed">tap again to delete</span> — the second press deletes the set.</dd>
+  <dt><span class="ui-pill m">select</span></dt>
+  <dd>Plays from this set — see <a href="#play-set">Playing from a set</a>. It reads <span class="ui-pill m sel">selected ✓</span>, and the set's line turns gold, while it is.</dd>
+  <dt><span class="ui-pill m">rename</span></dt>
+  <dd>Type the new name, then press <span class="ui-pill m sel">save</span> (or Done, or tap anywhere else).</dd>
+  <dt><span class="ui-pill m">delete</span></dt>
+  <dd>Press it, then press <span class="ui-pill m armed">tap again to delete</span> — the second press deletes the set.</dd>
 </dl>
 
 <figure class="plate">
-  <img src="img/edit-set-delete.png" width="600" height="176"
+  <img src="img/edit-set-delete.png" width="600" height="278"
        alt="The Tuesday reels set with its delete button turned red and reading tap again to delete.">
-  <figcaption>After the first press. Leave it a few seconds and it goes back to <span class="ui-pill">delete</span>.</figcaption>
+  <figcaption>After the first press. Leave it a few seconds and it goes back to <span class="ui-pill m">delete</span>.</figcaption>
 </figure>
 </div>
 
@@ -1279,9 +1309,9 @@ nav.toc li li a { color: var(--muted); }
 </ul>
 
 <figure class="plate">
-  <img src="img/edit-set-rename.png" width="600" height="206"
+  <img src="img/edit-set-rename.png" width="600" height="240"
        alt="The set's name being edited in a text box, reading Kesh set, with a single save button underneath.">
-  <figcaption>Renaming. Press <span class="ui-pill">save</span> when you are done.</figcaption>
+  <figcaption>Renaming. Press <span class="ui-pill m sel">save</span> when you are done.</figcaption>
 </figure>
 </div>
 
@@ -1289,30 +1319,44 @@ nav.toc li li a { color: var(--muted); }
 <h3 id="play-set">Playing from a set</h3>
 
 <figure class="sliver">
-  <img src="img/edit-set-bar.png" width="860" height="600"
-       alt="A bar above the sheet music: the word SET, the name Kesh set and a cross, then three numbered buttons — 1 The Kesh (highlighted), 2 Out On The Ocean, 3 Morrison's. Below it the sheet music for The Kesh.">
-  <figcaption>A selected set sits above the music. The highlighted tune is the one on screen.</figcaption>
+  <img src="img/edit-set-bar.png" width="860" height="458"
+       alt="The last line of a tune's sheet music, and in the space under it a long pill. At its left end a back arrow; then SET, 1 of 3, next: Out On The Ocean; then a forward arrow and, at its right end, a cross.">
+  <figcaption>A selected set, at the end of the music.</figcaption>
 </figure>
 
 <p>
-  Select a set before you play it and a bar of its tunes sits above the sheet
-  music. Tap a tune in the bar to see its music. <span class="glyph inline">×</span> puts the set
-  away again; a selected set is also put away when the app is closed.
+  Select a set before you play it and a bar at the end of the music — where you
+  are as a tune finishes — shows where you are in the set and what comes next; on
+  the set's last tune, what came before. On a wide screen it shows both. In full
+  screen it sits at the foot of the screen.
 </p>
+
+<ul>
+  <li><span class="glyph inline">‹</span> and <span class="glyph inline">›</span> step back and forward through the set, opening the new tune at its first line.</li>
+  <li><span class="glyph inline">×</span> puts the set away. The music on screen stays where it is.</li>
+</ul>
+
+<p>A selected set is also put away when the app is closed.</p>
 
 <p>While JigRipper is listening, the set helps it:</p>
 
 <ul>
-  <li>The music still follows what you play, and the tune you are playing lights up in the bar.</li>
-  <li>The set's next tune has a dashed outline. JigRipper expects it, and recognises it sooner.</li>
+  <li>The music still follows what you play, and the heading shows where you are in the set.</li>
+  <li>When you are on a tune in the set, the next one reads <span class="ui-text">up next</span>. JigRipper expects it, and recognises it sooner.</li>
   <li>When it becomes unsure of the tune you are on, it shows the next tune's music — the likeliest thing to be coming — until it is sure what you are playing.</li>
   <li>A tune that is not in the set has to play for a while before it takes over from one that is, so a moment of confusion does not pull you out of the set.</li>
-  <li>Tapping another tune in the bar shows its music for a look ahead; when the next tune starts, the music goes back to following you.</li>
+  <li>Stepping to another tune in the set shows its music for a look ahead; when the next tune starts, the music goes back to following you.</li>
 </ul>
 
 <p>
   It never names a tune you are not playing: the set makes JigRipper quicker to
   hear the tunes in it, and nothing more.
+</p>
+
+<p>
+  Under a tune's music, <span class="ui-text">In your sets</span> lists the sets you have saved that
+  include it, and where it comes in each. Tap one to select that set; tap it
+  again to put it away.
 </p>
 </div>
 </section>
@@ -1685,6 +1729,12 @@ nav.toc li li a { color: var(--muted); }
   <dd>Dark or Paper for the sheet music — light notes on the app's dark
       background, or black notes on a pale page. Under <span class="ui-text">Sheet music</span>;
       see <a href="#sheet-page">Dark or paper</a>.</dd>
+  <dt><span class="ui-text">thesession.org: auto-open</span></dt>
+  <dd>Off by default. Automatically opens a tab showing the current tune on
+      thesession.org each time JigRipper locks onto a new one — the
+      <span class="glyph inline">↗</span> button, pressed for you. In a browser, allow pop-ups
+      for jigripper.com when it asks. In the app, it opens only while JigRipper is
+      on screen. Under <span class="ui-text">Sheet music</span>.</dd>
   <dt><span class="ui-text">Microphone</span></dt>
   <dd>Which microphone to listen through, if you have more than one — a clip-on
       mic or a USB interface will hear far better than a phone across the room.
