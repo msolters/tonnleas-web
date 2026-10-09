@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JigRipper — Help &amp; Guide</title>
-<meta name="description" content="How to use JigRipper: listening for tunes, reading the tune river, sheet music, search, sessions and sets.">
+<meta name="description" content="How to use JigRipper: listening for tunes, reading the tune river, sheet music, search, sessions and sets, and the Wear OS and Apple Watch companions.">
 <meta name="color-scheme" content="dark">
 <link rel="canonical" href="https://www.jigripper.com/help/">
 <style>
@@ -114,6 +114,13 @@ h3 {
   color: var(--silver); margin: var(--f5) 0 var(--f2);
 }
 
+/* h4 — one step under h3, introduced for the per-platform watch subsections
+   (Apple Watch / Wear OS) so each platform's setup reads as one block. */
+h4 {
+  font-size: 17px; font-weight: 500; letter-spacing: 0.015em;
+  color: var(--text); margin: var(--f4) 0 var(--f2);
+}
+
 p { margin: 0 0 var(--f3); }
 strong { color: var(--text); font-weight: 500; }
 em { color: var(--silver); font-style: normal; }
@@ -169,6 +176,31 @@ figcaption {
 figure.plate    { max-width: 320px; }
 figure.sliver   { max-width: 420px; }
 figure.gem      { max-width: 72px; }
+figure.wrist    { max-width: 240px; }
+figure.round img { border-radius: 50%; }   /* a round watch screen: the glow follows the circle */
+
+/* ── Figures whose photograph has not been taken yet ──────
+   A figure marked `pending` hides its (nonexistent) <img> so it can never render
+   as a broken-image hole, but SHOWS a labelled slot in its place naming the file
+   that is owed. Hiding the whole figure was the earlier behaviour and it was
+   wrong for review: it made the gaps invisible, so a reader could not see what
+   was missing or where it belonged.
+   ⚠️ Each one carries the intended filename in data-shot and a precise alt text.
+   Drop the file into img/ and DELETE the `pending` class from that figure — the
+   shot then appears. Grep this file for "pending" to see what is still owed.
+   ⚠️ THIS RULE MUST NOT REACH A PUBLISHED PAGE with slots still in it. Either the
+   four shots land and the classes come off, or restore `display:none` before
+   deploying — a visitor should never be shown our to-do list. */
+figure.pending img { display: none; }
+figure.pending::before {
+  content: "screenshot pending — " attr(data-shot);
+  display: block; box-sizing: border-box; width: 100%;
+  padding: var(--f3) var(--f2);
+  border: 1px dashed var(--rule); border-radius: 3px;
+  font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); text-align: center; background: rgba(255,255,255,0.02);
+}
+figure.pending figcaption { opacity: 0.55; font-style: italic; }
 
 /* ── Keyed list: the numbers echo the markers on the plate ── */
 ol.keyed { list-style: none; padding: 0; margin: var(--f3) 0 var(--f3); counter-reset: k; }
@@ -203,6 +235,45 @@ dl.controls dd { margin: var(--f1) 0 0; color: var(--muted); }
   color: var(--silver); font-size: 15px; font-weight: 300;
 }
 
+/* ── UI references: the app's own controls, drawn as they look in the app ──
+   Operator, 2026-10-08: bold alone made "save" hard to tell from emphasis.
+   Each kind of control the text names is drawn like its counterpart in the
+   app, so the reader knows what to look for on screen. <strong> is now ONLY
+   emphasis. */
+.ui-pill {                                 /* small rounded buttons: save, select, library ▾ … */
+  display: inline-block; padding: 0 0.6em;
+  border: 1px solid rgba(143, 191, 160, 0.30); border-radius: 0.9em;
+  background: rgba(10, 14, 13, 0.6);
+  color: var(--silver); font-size: 0.86em; font-weight: 400; line-height: 1.55;
+  letter-spacing: 0.02em; white-space: nowrap;
+}
+.ui-pill.on    { background: rgba(143, 191, 160, 0.18); border-color: rgba(143, 191, 160, 0.55); color: #E8F4EC; }
+.ui-pill.done  { border-color: rgba(143, 191, 160, 0.14); color: var(--muted); }
+.ui-pill.armed { border-color: rgba(220, 120, 110, 0.60); background: rgba(220, 120, 110, 0.12); color: #E8A39A; }
+.ui-btn {                                  /* rectangular buttons: Replace with…, Delete, + Add tune … */
+  display: inline-block; padding: 0 0.7em;
+  border: 1px solid rgba(143, 191, 160, 0.28); border-radius: 0.45em;
+  background: rgba(143, 191, 160, 0.06);
+  color: var(--text); font-size: 0.9em; font-weight: 400; line-height: 1.6; white-space: nowrap;
+}
+.ui-btn.gold    { border-color: rgba(201, 168, 76, 0.55); background: transparent; color: var(--gold); }
+.ui-btn.fill    { border-color: var(--gold); background: var(--gold); color: var(--ground); font-weight: 500; }
+.ui-btn.outline { border-color: var(--silver); background: transparent; color: var(--silver); }
+.glyph.inline {                            /* the round icon buttons, at text size */
+  width: 1.65em; height: 1.65em; font-size: 0.85em;
+  vertical-align: 0.06em; margin: 0 0.08em;
+}
+.ui-text {                                 /* words the app shows: status, settings, messages */
+  padding: 0 0.3em; border-radius: 3px;
+  background: rgba(143, 191, 160, 0.10);
+  color: #C8E6D2; font-weight: 400; white-space: nowrap;
+}
+kbd {                                      /* a key on the keyboard */
+  font-family: inherit; font-size: 0.82em; padding: 0 0.45em;
+  border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px;
+  background: var(--surface); color: var(--text); white-space: nowrap;
+}
+
 /* ── Small print ──────────────────────────────────────── */
 footer.colophon {
   margin-top: var(--f6); padding-top: var(--f4);
@@ -211,6 +282,152 @@ footer.colophon {
 }
 footer.colophon p { margin-bottom: var(--f2); }
 .backlink { display: inline-block; margin-top: var(--f5); font-size: 15px; }
+
+/* ── Contents: one layer of sub-headings ────────────────────
+   Every section lists its h3s under it (operator, 2026-10-08: "at least one
+   layer of sub-headings"). */
+nav.toc ol ol { margin: var(--f1) 0 var(--f2) var(--f3); }
+nav.toc li li { margin-bottom: 4px; font-size: 15px; }
+nav.toc li li a { color: var(--muted); }
+
+/* ── Floating contents (wide screens) ───────────────────────
+   On a screen with room beside the column, the contents leave the
+   masthead and float in the left margin, fixed to the window, so they
+   are always to hand (operator, 2026-10-08). 1280 px is where a left
+   gutter of f3 + 11rem clears the 55rem figures; narrower screens keep
+   the contents at the top, as before. Still ZERO script: the
+   "you are here" mark below is a CSS scroll-driven animation. */
+@media (min-width: 1280px) {
+  nav.toc {
+    position: fixed; z-index: 5;
+    top: var(--f6); left: var(--f3);
+    width: 11rem;
+    max-height: calc(100vh - 2 * var(--f6)); overflow-y: auto;
+    margin: 0; padding: var(--f2) 0;
+    font-size: 14px; line-height: 1.4;
+  }
+  nav.toc li { margin-bottom: 2px; }
+  nav.toc a {
+    display: block; padding: 3px 0 3px var(--f2);
+    border-left: 2px solid var(--rule-soft);
+    text-decoration: none; color: var(--muted);
+  }
+  nav.toc a:hover { color: var(--gold); }
+  nav.toc ol ol { margin: 0; }
+  nav.toc li li { font-size: 13px; margin-bottom: 0; }
+  nav.toc li li a { padding-left: calc(var(--f2) * 2); }
+
+  /* "You are here": each section (and each sub-heading's block) drives its
+     contents entry through a view timeline whose window is shrunk
+     (view-timeline-inset) to a thin band a quarter of the way down the
+     screen, so exactly one section — the one you are reading — overlaps it
+     and lights its entry, and its sub-headings open (all of them at once
+     would not fit beside the page). Where scroll-driven animations are
+     unsupported the contents still float, with every sub-heading shown. */
+  @supports (animation-timeline: view()) and (timeline-scope: none) {
+    body { timeline-scope: --toc-glance, --toc-start, --toc-start-buttons-above-river, --toc-start-what-status-line, --toc-river, --toc-river-scrolling-back-through, --toc-river-reading-bands, --toc-river-tapping-band, --toc-sheet, --toc-sheet-keys-settings, --toc-sheet-page, --toc-sheet-buttons, --toc-sheet-holding-tune-still, --toc-sheet-gestures-music-itself, --toc-search, --toc-search-computer, --toc-library, --toc-library-sessions, --toc-library-tunes-your-saved, --toc-library-sets, --toc-editing, --toc-current-session, --toc-fix-tune, --toc-regroup, --toc-keep-set, --toc-your-sets, --toc-inside-set, --toc-play-set, --toc-upload, --toc-watch, --toc-watch-what-you-see, --toc-watch-starting-stopping, --toc-watch-apple, --toc-watch-wear, --toc-watch-when-wrist-phone, --toc-settings, --toc-input, --toc-trouble, --toc-trouble-not-hearing-me, --toc-trouble-showing-wrong-tune, --toc-trouble-showing-wrong-key, --toc-trouble-music-screen-keeps; }
+    nav.toc ol ol { max-height: 0; overflow: hidden; }
+    section.part:has(> h2#glance) { view-timeline: --toc-glance block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#glance"] { animation: toc-here linear none; animation-timeline: --toc-glance; }
+    section.part:has(> h2#start) { view-timeline: --toc-start block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#start"] { animation: toc-here linear none; animation-timeline: --toc-start; }
+    nav.toc li:has(> a[href="#start"]) > ol { animation: toc-open linear none; animation-timeline: --toc-start; }
+    div.sub:has(> h3#start-buttons-above-river) { view-timeline: --toc-start-buttons-above-river block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#start-buttons-above-river"] { animation: toc-here linear none; animation-timeline: --toc-start-buttons-above-river; }
+    div.sub:has(> h3#start-what-status-line) { view-timeline: --toc-start-what-status-line block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#start-what-status-line"] { animation: toc-here linear none; animation-timeline: --toc-start-what-status-line; }
+    section.part:has(> h2#river) { view-timeline: --toc-river block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#river"] { animation: toc-here linear none; animation-timeline: --toc-river; }
+    nav.toc li:has(> a[href="#river"]) > ol { animation: toc-open linear none; animation-timeline: --toc-river; }
+    div.sub:has(> h3#river-scrolling-back-through) { view-timeline: --toc-river-scrolling-back-through block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#river-scrolling-back-through"] { animation: toc-here linear none; animation-timeline: --toc-river-scrolling-back-through; }
+    div.sub:has(> h3#river-reading-bands) { view-timeline: --toc-river-reading-bands block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#river-reading-bands"] { animation: toc-here linear none; animation-timeline: --toc-river-reading-bands; }
+    div.sub:has(> h3#river-tapping-band) { view-timeline: --toc-river-tapping-band block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#river-tapping-band"] { animation: toc-here linear none; animation-timeline: --toc-river-tapping-band; }
+    section.part:has(> h2#sheet) { view-timeline: --toc-sheet block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#sheet"] { animation: toc-here linear none; animation-timeline: --toc-sheet; }
+    nav.toc li:has(> a[href="#sheet"]) > ol { animation: toc-open linear none; animation-timeline: --toc-sheet; }
+    div.sub:has(> h3#sheet-keys-settings) { view-timeline: --toc-sheet-keys-settings block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#sheet-keys-settings"] { animation: toc-here linear none; animation-timeline: --toc-sheet-keys-settings; }
+    div.sub:has(> h3#sheet-page) { view-timeline: --toc-sheet-page block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#sheet-page"] { animation: toc-here linear none; animation-timeline: --toc-sheet-page; }
+    div.sub:has(> h3#sheet-buttons) { view-timeline: --toc-sheet-buttons block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#sheet-buttons"] { animation: toc-here linear none; animation-timeline: --toc-sheet-buttons; }
+    div.sub:has(> h3#sheet-holding-tune-still) { view-timeline: --toc-sheet-holding-tune-still block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#sheet-holding-tune-still"] { animation: toc-here linear none; animation-timeline: --toc-sheet-holding-tune-still; }
+    div.sub:has(> h3#sheet-gestures-music-itself) { view-timeline: --toc-sheet-gestures-music-itself block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#sheet-gestures-music-itself"] { animation: toc-here linear none; animation-timeline: --toc-sheet-gestures-music-itself; }
+    section.part:has(> h2#search) { view-timeline: --toc-search block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#search"] { animation: toc-here linear none; animation-timeline: --toc-search; }
+    nav.toc li:has(> a[href="#search"]) > ol { animation: toc-open linear none; animation-timeline: --toc-search; }
+    div.sub:has(> h3#search-computer) { view-timeline: --toc-search-computer block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#search-computer"] { animation: toc-here linear none; animation-timeline: --toc-search-computer; }
+    section.part:has(> h2#library) { view-timeline: --toc-library block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#library"] { animation: toc-here linear none; animation-timeline: --toc-library; }
+    nav.toc li:has(> a[href="#library"]) > ol { animation: toc-open linear none; animation-timeline: --toc-library; }
+    div.sub:has(> h3#library-sessions) { view-timeline: --toc-library-sessions block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#library-sessions"] { animation: toc-here linear none; animation-timeline: --toc-library-sessions; }
+    div.sub:has(> h3#library-tunes-your-saved) { view-timeline: --toc-library-tunes-your-saved block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#library-tunes-your-saved"] { animation: toc-here linear none; animation-timeline: --toc-library-tunes-your-saved; }
+    div.sub:has(> h3#library-sets) { view-timeline: --toc-library-sets block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#library-sets"] { animation: toc-here linear none; animation-timeline: --toc-library-sets; }
+    section.part:has(> h2#editing) { view-timeline: --toc-editing block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#editing"] { animation: toc-here linear none; animation-timeline: --toc-editing; }
+    nav.toc li:has(> a[href="#editing"]) > ol { animation: toc-open linear none; animation-timeline: --toc-editing; }
+    div.sub:has(> h3#current-session) { view-timeline: --toc-current-session block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#current-session"] { animation: toc-here linear none; animation-timeline: --toc-current-session; }
+    div.sub:has(> h3#fix-tune) { view-timeline: --toc-fix-tune block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#fix-tune"] { animation: toc-here linear none; animation-timeline: --toc-fix-tune; }
+    div.sub:has(> h3#regroup) { view-timeline: --toc-regroup block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#regroup"] { animation: toc-here linear none; animation-timeline: --toc-regroup; }
+    div.sub:has(> h3#keep-set) { view-timeline: --toc-keep-set block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#keep-set"] { animation: toc-here linear none; animation-timeline: --toc-keep-set; }
+    div.sub:has(> h3#your-sets) { view-timeline: --toc-your-sets block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#your-sets"] { animation: toc-here linear none; animation-timeline: --toc-your-sets; }
+    div.sub:has(> h3#inside-set) { view-timeline: --toc-inside-set block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#inside-set"] { animation: toc-here linear none; animation-timeline: --toc-inside-set; }
+    div.sub:has(> h3#play-set) { view-timeline: --toc-play-set block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#play-set"] { animation: toc-here linear none; animation-timeline: --toc-play-set; }
+    section.part:has(> h2#upload) { view-timeline: --toc-upload block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#upload"] { animation: toc-here linear none; animation-timeline: --toc-upload; }
+    section.part:has(> h2#watch) { view-timeline: --toc-watch block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#watch"] { animation: toc-here linear none; animation-timeline: --toc-watch; }
+    nav.toc li:has(> a[href="#watch"]) > ol { animation: toc-open linear none; animation-timeline: --toc-watch; }
+    div.sub:has(> h3#watch-what-you-see) { view-timeline: --toc-watch-what-you-see block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#watch-what-you-see"] { animation: toc-here linear none; animation-timeline: --toc-watch-what-you-see; }
+    div.sub:has(> h3#watch-starting-stopping) { view-timeline: --toc-watch-starting-stopping block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#watch-starting-stopping"] { animation: toc-here linear none; animation-timeline: --toc-watch-starting-stopping; }
+    div.sub:has(> h3#watch-apple) { view-timeline: --toc-watch-apple block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#watch-apple"] { animation: toc-here linear none; animation-timeline: --toc-watch-apple; }
+    div.sub:has(> h3#watch-wear) { view-timeline: --toc-watch-wear block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#watch-wear"] { animation: toc-here linear none; animation-timeline: --toc-watch-wear; }
+    div.sub:has(> h3#watch-when-wrist-phone) { view-timeline: --toc-watch-when-wrist-phone block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#watch-when-wrist-phone"] { animation: toc-here linear none; animation-timeline: --toc-watch-when-wrist-phone; }
+    section.part:has(> h2#settings) { view-timeline: --toc-settings block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#settings"] { animation: toc-here linear none; animation-timeline: --toc-settings; }
+    nav.toc li:has(> a[href="#settings"]) > ol { animation: toc-open linear none; animation-timeline: --toc-settings; }
+    div.sub:has(> h3#input) { view-timeline: --toc-input block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#input"] { animation: toc-here linear none; animation-timeline: --toc-input; }
+    section.part:has(> h2#trouble) { view-timeline: --toc-trouble block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#trouble"] { animation: toc-here linear none; animation-timeline: --toc-trouble; }
+    nav.toc li:has(> a[href="#trouble"]) > ol { animation: toc-open linear none; animation-timeline: --toc-trouble; }
+    div.sub:has(> h3#trouble-not-hearing-me) { view-timeline: --toc-trouble-not-hearing-me block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#trouble-not-hearing-me"] { animation: toc-here linear none; animation-timeline: --toc-trouble-not-hearing-me; }
+    div.sub:has(> h3#trouble-showing-wrong-tune) { view-timeline: --toc-trouble-showing-wrong-tune block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#trouble-showing-wrong-tune"] { animation: toc-here linear none; animation-timeline: --toc-trouble-showing-wrong-tune; }
+    div.sub:has(> h3#trouble-showing-wrong-key) { view-timeline: --toc-trouble-showing-wrong-key block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#trouble-showing-wrong-key"] { animation: toc-here linear none; animation-timeline: --toc-trouble-showing-wrong-key; }
+    div.sub:has(> h3#trouble-music-screen-keeps) { view-timeline: --toc-trouble-music-screen-keeps block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#trouble-music-screen-keeps"] { animation: toc-here linear none; animation-timeline: --toc-trouble-music-screen-keeps; }
+    @keyframes toc-here {
+      from, to { color: var(--gold); border-left-color: var(--gold); }
+    }
+    @keyframes toc-open {
+      from, to { max-height: 40em; }
+    }
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
@@ -240,14 +457,74 @@ footer.colophon p { margin-bottom: var(--f2); }
     <h2 id="toc-head">On this page</h2>
     <ol>
       <li><a href="#glance">The app at a glance</a></li>
-      <li><a href="#start">Getting started</a></li>
-      <li><a href="#river">The tune river</a></li>
-      <li><a href="#sheet">Sheet music</a></li>
-      <li><a href="#search">Searching for a tune</a></li>
-      <li><a href="#library">Sessions, tunes and sets</a></li>
-      <li><a href="#upload">Listening to a recording</a></li>
-      <li><a href="#settings">Settings worth knowing</a></li>
-      <li><a href="#trouble">When it goes wrong</a></li>
+      <li><a href="#start">Getting started</a>
+        <ol>
+          <li><a href="#start-buttons-above-river">The buttons above the river</a></li>
+          <li><a href="#start-what-status-line">What the status line says</a></li>
+        </ol>
+      </li>
+      <li><a href="#river">The tune river</a>
+        <ol>
+          <li><a href="#river-scrolling-back-through">Scrolling back through it</a></li>
+          <li><a href="#river-reading-bands">Reading the bands</a></li>
+          <li><a href="#river-tapping-band">Tapping a band</a></li>
+        </ol>
+      </li>
+      <li><a href="#sheet">Sheet music</a>
+        <ol>
+          <li><a href="#sheet-keys-settings">Keys and settings</a></li>
+          <li><a href="#sheet-page">Dark or paper</a></li>
+          <li><a href="#sheet-buttons">The buttons</a></li>
+          <li><a href="#sheet-holding-tune-still">Holding a tune still</a></li>
+          <li><a href="#sheet-gestures-music-itself">Gestures on the music itself</a></li>
+        </ol>
+      </li>
+      <li><a href="#search">Searching for a tune</a>
+        <ol>
+          <li><a href="#search-computer">On a computer</a></li>
+        </ol>
+      </li>
+      <li><a href="#library">Sessions, tunes and sets</a>
+        <ol>
+          <li><a href="#library-sessions">Sessions</a></li>
+          <li><a href="#library-tunes-your-saved">Tunes — your saved collection</a></li>
+          <li><a href="#library-sets">Sets</a></li>
+        </ol>
+      </li>
+      <li><a href="#editing">Editing sessions and sets</a>
+        <ol>
+          <li><a href="#current-session">The current session</a></li>
+          <li><a href="#fix-tune">Fixing a tune it got wrong</a></li>
+          <li><a href="#regroup">Moving where a set starts or ends</a></li>
+          <li><a href="#keep-set">Keeping a set</a></li>
+          <li><a href="#your-sets">Your sets</a></li>
+          <li><a href="#inside-set">Inside a set</a></li>
+          <li><a href="#play-set">Playing from a set</a></li>
+        </ol>
+      </li>
+      <li><a href="#upload">Analyzing an audio file</a></li>
+      <li><a href="#watch">On your watch</a>
+        <ol>
+          <li><a href="#watch-what-you-see">What you see on the wrist</a></li>
+          <li><a href="#watch-starting-stopping">Starting and stopping</a></li>
+          <li><a href="#watch-apple">Apple Watch</a></li>
+          <li><a href="#watch-wear">Wear OS</a></li>
+          <li><a href="#watch-when-wrist-phone">When the wrist and the phone disagree</a></li>
+        </ol>
+      </li>
+      <li><a href="#settings">Settings worth knowing</a>
+        <ol>
+          <li><a href="#input">Choosing a microphone</a></li>
+        </ol>
+      </li>
+      <li><a href="#trouble">When it goes wrong</a>
+        <ol>
+          <li><a href="#trouble-not-hearing-me">It is not hearing me</a></li>
+          <li><a href="#trouble-showing-wrong-tune">It is showing the wrong tune</a></li>
+          <li><a href="#trouble-showing-wrong-key">It is showing the wrong key</a></li>
+          <li><a href="#trouble-music-screen-keeps">The music on screen keeps changing</a></li>
+        </ol>
+      </li>
     </ol>
   </nav>
 </header>
@@ -255,6 +532,7 @@ footer.colophon p { margin-bottom: var(--f2); }
 <main>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+<section class="part">
 <h2 id="glance">The app at a glance</h2>
 
 <p>
@@ -385,13 +663,15 @@ footer.colophon p { margin-bottom: var(--f2); }
       river carries what you played away to the left. Scroll left to go back
       through the evening.</li>
 </ol>
+</section>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+<section class="part">
 <h2 id="start">Getting started</h2>
 
 <p>
   Find the ring near the bottom of the screen, beside the word
-  <strong>listen</strong>. Tap it, and JigRipper starts listening through your
+  <span class="ui-text">listen</span>. Tap it, and JigRipper starts listening through your
   microphone.
 </p>
 
@@ -415,47 +695,54 @@ footer.colophon p { margin-bottom: var(--f2); }
   </p>
 </aside>
 
-<h3>The buttons above the river</h3>
+<div class="sub">
+<h3 id="start-buttons-above-river">The buttons above the river</h3>
 
 <figure class="wide">
   <img src="img/context-buttons.png" width="1842" height="252"
        alt="Four small rounded buttons in a row, reading save, upload, tuner and expand.">
   <figcaption>
-    These appear as they become useful. <strong>tuner</strong> shows only while
-    JigRipper is listening; <strong>save</strong> only once you have played
+    These appear as they become useful. <span class="ui-pill">tuner</span> shows only while
+    JigRipper is listening; <span class="ui-pill">save</span> only once you have played
     something.
   </figcaption>
 </figure>
 
 <dl class="controls">
-  <dt>save</dt>
+  <dt><span class="ui-pill">save</span></dt>
   <dd>Keeps this session so you can come back to it.</dd>
-  <dt>upload</dt>
+  <dt><span class="ui-pill">upload</span></dt>
   <dd>Hands JigRipper a recording instead of the microphone.</dd>
-  <dt>tuner</dt>
+  <dt><span class="ui-pill">tuner</span></dt>
   <dd>A tuning dial, for while you are listening.</dd>
-  <dt>expand</dt>
-  <dd>Makes the river taller. It then reads <strong>compact</strong> to put it back.</dd>
+  <dt><span class="ui-pill">expand</span></dt>
+  <dd>Makes the river taller. It then reads <span class="ui-pill">compact</span> to put it back.</dd>
 </dl>
+</div>
 
-<h3>What the status line says</h3>
+<div class="sub">
+<h3 id="start-what-status-line">What the status line says</h3>
 
 <dl class="controls">
-  <dt>listening</dt>
+  <dt><span class="ui-text">listening</span></dt>
   <dd>It can hear you, but has not settled on a tune yet.</dd>
-  <dt>identifying</dt>
+  <dt><span class="ui-text">identifying</span></dt>
   <dd>It has a candidate in mind and is gathering more evidence.</dd>
-  <dt>locked</dt>
+  <dt><span class="ui-text">locked</span></dt>
   <dd>It has settled. The name appears beneath, with the tune type, time signature, tempo, key, and the instruments it thinks it can hear.</dd>
-  <dt>keep playing…</dt>
+  <dt><span class="ui-text">keep playing…</span></dt>
   <dd>It heard music but could not match it. Play on — it keeps trying.</dd>
-  <dt>noise</dt>
+  <dt><span class="ui-text">noise</span></dt>
   <dd>It hears sound, but not music. A fan, a room, a conversation.</dd>
-  <dt>silence</dt>
+  <dt><span class="ui-text">silence</span></dt>
   <dd>Nothing loud enough to work with.</dd>
 </dl>
+</div>
+</section>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+
+<section class="part">
 <h2 id="river">The tune river</h2>
 
 <p>
@@ -473,7 +760,8 @@ footer.colophon p { margin-bottom: var(--f2); }
   </figcaption>
 </figure>
 
-<h3>Scrolling back through it</h3>
+<div class="sub">
+<h3 id="river-scrolling-back-through">Scrolling back through it</h3>
 
 <ul>
   <li><strong>On a phone or tablet:</strong> drag the river sideways with your finger.</li>
@@ -485,12 +773,14 @@ footer.colophon p { margin-bottom: var(--f2); }
 <p>
   While you are listening, the river follows along on its own. Scrolling back
   stops that, so you can look at something without it sliding away. To return to
-  the present, press the <strong>▶</strong> button at the right-hand edge, scroll
+  the present, press the <span class="glyph inline">▶</span> button at the right-hand edge, scroll
   all the way back to the right, tap an empty part of the river — or just wait.
   It returns by itself after fifteen seconds.
 </p>
+</div>
 
-<h3>Reading the bands</h3>
+<div class="sub">
+<h3 id="river-reading-bands">Reading the bands</h3>
 
 <ul>
   <li>A band is one tune played in one key. Playing the same tune twice in a row,
@@ -513,21 +803,27 @@ footer.colophon p { margin-bottom: var(--f2); }
     benefit of more of the tune — older parts of the river are settled and stay put.
   </p>
 </aside>
+</div>
 
-<h3>Tapping a band</h3>
+<div class="sub">
+<h3 id="river-tapping-band">Tapping a band</h3>
 
 <p>
   Tap any band to open that tune's sheet music, in the key you played it in. The
   sheet then holds on that tune instead of following what JigRipper hears; tap
   the same band again to let go of it.
 </p>
+</div>
+</section>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+
+<section class="part">
 <h2 id="sheet">Sheet music</h2>
 
 <p>
   Sheet music appears on its own when a tune is identified, and whenever you tap
-  a band in the river or pick a tune from search. The <strong>full screen</strong>
+  a band in the river or pick a tune from search. The <span class="glyph inline">▢</span> full screen
   button fills the screen with it.
 </p>
 
@@ -535,17 +831,18 @@ footer.colophon p { margin-bottom: var(--f2); }
   <img src="img/sheet-fullscreen.jpg" width="1760" height="2560"
        alt="A full screen of engraved sheet music. At the top left a close button and a small leaf-shaped clasp; in the centre the title Banish Misfortune with Jig, D Mixolydian and 6/8 beneath it; at the top right four round buttons. Below, a row of key buttons reading All, D Ionian, D Mixolydian and E Mixolydian, then arrows either side of 1/15. Nine staves of music in 6/8 follow.">
   <figcaption>
-    A tune in full screen. The <strong>×</strong> at the top left closes it; the
+    A tune in full screen. The <span class="glyph inline">×</span> at the top left closes it; the
     leaf beside it is the <strong>clasp</strong>, which decides whether the music
     keeps following what JigRipper hears or stays where it is.
   </figcaption>
 </figure>
 
-<h3>Keys and settings</h3>
+<div class="sub">
+<h3 id="sheet-keys-settings">Keys and settings</h3>
 
 <p>
   Most tunes have been written down many times, in slightly different versions.
-  Each one is a <strong>setting</strong>. <strong>1/11</strong> means you are
+  Each one is a <strong>setting</strong>. <span class="ui-text">1/11</span> means you are
   looking at the first of eleven, and the arrows either side step through them.
 </p>
 
@@ -556,17 +853,19 @@ footer.colophon p { margin-bottom: var(--f2); }
 </figure>
 
 <p>
-  The buttons to the left filter by key. <strong>All</strong> shows every
+  The buttons to the left filter by key. <span class="ui-pill">All</span> shows every
   setting; picking a key narrows the list to settings written in it.
 </p>
+</div>
 
+<div class="sub">
 <h3 id="sheet-page">Dark or paper</h3>
 
 <p>
   The music is drawn light-on-dark to match the rest of the app. If you find
   black notes on a pale page easier to read — in daylight, or just by habit —
-  switch to <strong>Paper</strong>: settings, <strong>Sheet music</strong>,
-  <strong>Page</strong>. Only the notation changes; the title, the key buttons
+  switch to <span class="ui-text">Paper</span>: settings, <span class="ui-text">Sheet music</span>,
+  <span class="ui-text">Page</span>. Only the notation changes; the title, the key buttons
   and the rest of the app stay dark. The choice applies to the small sheet and
   full screen alike, and is remembered.
 </p>
@@ -574,10 +873,12 @@ footer.colophon p { margin-bottom: var(--f2); }
 <figure class="wide">
   <img src="img/sheet-paper.jpg" width="1760" height="1300"
        alt="The sheet music panel with Banish Misfortune. The title, action buttons and key filter are on the dark background as before, but the staves below are black notes on a pale cream page.">
-  <figcaption>The same sheet with <strong>Page</strong> set to Paper.</figcaption>
+  <figcaption>The same sheet with <span class="ui-text">Page</span> set to Paper.</figcaption>
 </figure>
+</div>
 
-<h3>The buttons</h3>
+<div class="sub">
+<h3 id="sheet-buttons">The buttons</h3>
 
 <figure class="plate">
   <img src="img/sheet-buttons-fullscreen.png" width="900" height="240"
@@ -590,7 +891,7 @@ footer.colophon p { margin-bottom: var(--f2); }
        alt="Four round outlined buttons in a row: a beamed pair of eighth notes, a hollow diamond, an arrow pointing up and to the right, and a small square outline.">
   <figcaption>
     The same row in the smaller sheet, which adds the square
-    <strong>full screen</strong> button on the end.
+    <span class="glyph inline">▢</span> full screen button on the end.
   </figcaption>
 </figure>
 
@@ -606,16 +907,18 @@ footer.colophon p { margin-bottom: var(--f2); }
   <dd>Adds suggested chords above the staff. Only offered for tunes that do not already have them.</dd>
 
   <dt><span class="glyph" aria-hidden="true">◇</span> Save this tune</dt>
-  <dd>Keeps the tune in your collection. The diamond fills in — <strong>◆</strong> — once saved. Tap it again to remove it.</dd>
+  <dd>Keeps the tune in your collection. The diamond fills in — <span class="glyph inline">◆</span> — once saved. Tap it again to remove it.</dd>
 
   <dt><span class="glyph" aria-hidden="true">↗</span> Open on thesession.org</dt>
   <dd>Opens the tune's page on thesession.org, where the music came from.</dd>
 
   <dt><span class="glyph" aria-hidden="true">▢</span> Full screen</dt>
-  <dd>A small outlined square, in the smaller sheet only. In full screen its place is taken by <strong>×</strong>, which closes.</dd>
+  <dd>A small outlined square, in the smaller sheet only. In full screen its place is taken by <span class="glyph inline">×</span>, which closes.</dd>
 </dl>
+</div>
 
-<h3>Holding a tune still</h3>
+<div class="sub">
+<h3 id="sheet-holding-tune-still">Holding a tune still</h3>
 
 <figure class="gem">
   <img src="img/hold-clasp.png" width="200" height="200"
@@ -630,8 +933,10 @@ footer.colophon p { margin-bottom: var(--f2); }
   <strong>Gold, with the leaves closed,</strong> means it is held, and the music
   stays where it is no matter what it hears. Tap the clasp to switch.
 </p>
+</div>
 
-<h3>Gestures on the music itself</h3>
+<div class="sub">
+<h3 id="sheet-gestures-music-itself">Gestures on the music itself</h3>
 
 <p>These work on a touch screen, in both the small sheet and full screen.</p>
 
@@ -647,12 +952,16 @@ footer.colophon p { margin-bottom: var(--f2); }
 </dl>
 
 <p>
-  On a computer, use the buttons and arrows instead. The <strong>←</strong> and
-  <strong>→</strong> keys step through settings too, as long as you are not
+  On a computer, use the buttons and arrows instead. The <kbd>←</kbd> and
+  <kbd>→</kbd> keys step through settings too, as long as you are not
   typing in the search box.
 </p>
+</div>
+</section>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+
+<section class="part">
 <h2 id="search">Searching for a tune</h2>
 
 <p>
@@ -674,55 +983,69 @@ footer.colophon p { margin-bottom: var(--f2); }
   <strong>tune names only</strong> — not alternative names, not types, not keys.
 </p>
 
-<h3>On a computer</h3>
+<div class="sub">
+<h3 id="search-computer">On a computer</h3>
 
 <ul>
   <li>Just start typing anywhere on the page — the letters go into the search box.</li>
-  <li><strong>Down</strong> and <strong>Up</strong> arrows move through the results.</li>
-  <li><strong>Enter</strong> opens the highlighted one.</li>
-  <li><strong>Escape</strong> clears the box and closes the list.</li>
+  <li><kbd>Down</kbd> and <kbd>Up</kbd> arrows move through the results.</li>
+  <li><kbd>Enter</kbd> opens the highlighted one.</li>
+  <li><kbd>Escape</kbd> clears the box and closes the list.</li>
 </ul>
 
 <p>
   Tapping the empty search box brings back the last few tunes you looked at,
-  under the heading <strong>RECENT</strong>.
+  under the heading <span class="ui-text">RECENT</span>.
 </p>
+</div>
+</section>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+
+<section class="part">
 <h2 id="library">Sessions, tunes and sets</h2>
 
 <p>
   Three collections sit at the right-hand end of the search bar:
-  <strong>sessions</strong>, <strong>tunes</strong> and <strong>sets</strong>. On
+  <span class="ui-pill">sessions</span>, <span class="ui-pill">tunes</span> and <span class="ui-pill">sets</span>. On
   a narrow screen they fold into a single button reading
-  <strong>library ▾</strong>. The number in brackets is how many you have.
+  <span class="ui-pill">library ▾</span>.
 </p>
 
-<h3>Sessions</h3>
+<div class="sub">
+<h3 id="library-sessions">Sessions</h3>
 
 <p>
-  A session is a whole evening's playing — the river, saved. Press
-  <strong>save</strong> above the river. It is named after the date and time, and
-  it briefly reads <strong>saved ✓</strong> so you know it took.
+  The entire contents of the river can be saved by pressing
+  <span class="ui-pill">save</span> above the river. Sessions are named after the date and time.
+  The button will briefly read  <span class="ui-pill on">saved ✓</span> to indicate success.
 </p>
+
+<figure class="plate">
+  <img src="img/edit-sessions-list.png" width="600" height="500"
+       alt="The Sessions list. One session reads Tue Oct 6, 7:30–8:31pm, then 3 sets · 8 tunes · 1h 1m, then its tunes in italics, then the words share and copy.">
+  <figcaption>Each session shows when it ran — first tune to last — then its sets, tunes and length.</figcaption>
+</figure>
 
 <p>
   Open the sessions list and tap one to load it back into the river, where you
-  can scroll through it and tap tunes exactly as you did on the night.
+  can scroll through it and tap tunes exactly as you did on the night. Its
+  <a href="#editing">Current session</a> list opens beside it.
 </p>
 
 <dl class="controls">
-  <dt>share</dt>
+  <dt><span class="ui-pill">share</span></dt>
   <dd>Hands the session to whatever you normally share with — messages, mail,
       notes. On a desktop browser that cannot share, it copies to the clipboard instead.</dd>
-  <dt>copy</dt>
+  <dt><span class="ui-pill">copy</span></dt>
   <dd>Copies the session straight to the clipboard as plain text.</dd>
 </dl>
 
 <p>Either way you get something like this, ready to paste anywhere:</p>
 
 <ul>
-  <li>the session name, how long it ran, and how many tunes;</li>
+  <li>when the session ran — its first tune to its last — then how many sets and
+      tunes, and how long;</li>
   <li>the tunes grouped into sets — runs played back to back — with the time each
       set started;</li>
   <li>a thesession.org link under every tune.</li>
@@ -735,62 +1058,281 @@ footer.colophon p { margin-bottom: var(--f2); }
 </p>
 
 <p>
+  Shared text follows your edits: fix a tune or regroup the sets
+  (<a href="#editing">Editing sessions and sets</a>) and the next share says so.
+</p>
+
+<p>
   To rename a session, press and hold its name and type a new one. The
-  <strong>×</strong> deletes it — <strong>immediately, with no confirmation.</strong>
+  <span class="glyph inline">×</span> deletes it — <strong>immediately, with no confirmation.</strong>
   JigRipper keeps up to fifty sessions and will not throw away an old one to make
   room for a new one; if you reach the limit it says so, and you delete one yourself.
 </p>
+</div>
 
-<h3>Tunes — your saved collection</h3>
+<div class="sub">
+<h3 id="library-tunes-your-saved">Tunes — your saved collection</h3>
 
 <p>
-  The <strong>tunes</strong> list holds everything you have saved with the
-  <strong>◇</strong> button on a sheet. That button is the only way in.
+  The <span class="ui-pill">tunes</span> list holds everything you have saved with the
+  <span class="glyph inline">◇</span> button on a sheet. That button is the only way in.
 </p>
 
 <p>
   Tap a tune in the list to open its music. Sort the list by
-  <strong>recent</strong>, <strong>name</strong>, <strong>type</strong> or
-  <strong>key</strong>. The <strong>×</strong> removes a tune, as does tapping
-  the filled <strong>◆</strong> on its sheet.
+  <span class="ui-pill">recent</span>, <span class="ui-pill">name</span>, <span class="ui-pill">type</span> or
+  <span class="ui-pill">key</span>. The <span class="glyph inline">×</span> removes a tune, as does tapping
+  the filled <span class="glyph inline">◆</span> on its sheet.
 </p>
+</div>
 
-<h3>Sets</h3>
+<div class="sub">
+<h3 id="library-sets">Sets</h3>
 
 <p>
-  A set is a few tunes you play back to back. JigRipper lets you write them down
-  so you remember the order. It does not play them.
+  A set is a few tunes you play back to back. Keep the ones you play often here,
+  build new ones, and <span class="ui-pill">select</span> one before you play it — JigRipper
+  then keeps its music to hand and uses it to recognise each next tune sooner.
+  How to do each is under <a href="#editing">Editing sessions and sets</a>.
 </p>
 
 <dl class="controls">
-  <dt>+ New set</dt>
-  <dd>Starts an empty set. Use <strong>+ Add tune</strong> to search for tunes, or pick from your saved ones.</dd>
-  <dt>From river</dt>
+  <dt><span class="ui-btn gold">+ New set</span></dt>
+  <dd>Starts an empty set. Use <span class="ui-btn gold">+ Add tune</span> to search for tunes, or pick from your saved ones.</dd>
+  <dt><span class="ui-btn">From river</span></dt>
   <dd>Builds a set out of what you just played. The panel closes and a small bar
-      appears reading <strong>BUILDING SET</strong>. Tap tunes in the river to add
-      them, in order, then press <strong>save set</strong>.</dd>
+      appears reading <span class="ui-text">BUILDING SET</span>. Tap tunes in the river to add
+      them, in order, then press <span class="ui-pill">save set</span>.</dd>
+</dl>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<section class="part">
+<h2 id="editing">Editing sessions and sets</h2>
+
+<p>
+  JigRipper gets most tunes right, but a room is a noisy place and now and then it
+  names one wrongly, or splits a set where you didn't stop. You can put that right
+  — while you are still playing, or afterwards on a saved session — and you can
+  keep the sets you like and play from them.
+</p>
+
+<div class="sub">
+<h3 id="current-session">The current session</h3>
+
+<figure class="plate">
+  <img src="img/edit-session-drawer.png" width="600" height="1258"
+       alt="A panel headed CURRENT SESSION. Under it: Tue Oct 6, 7:30–8:31pm; 3 sets · 8 tunes; Tap a tune to find it in the river. Hold a tune to edit it. Then two boxed sets, SET 1 — 7:30 PM and SET 2 — 7:55 PM, each with select and save to my sets buttons and a list of tunes with their type and key, each tune followed by three dots.">
+  <figcaption>The river as a set list. Set 2 has a tune in it that nobody played.</figcaption>
+</figure>
+
+<p>
+  Press <span class="ui-pill">☰</span> at the left end of the search bar — it reads
+  <span class="ui-pill">☰ session</span> where there is room. A panel slides in listing
+  everything in the river, grouped into sets just as the shared text groups them.
+  It shows the session you are listening to, or the saved session you have
+  opened; loading a session opens it for you.
+</p>
+
+<ul>
+  <li><strong>Tap a tune</strong> to close the panel and scroll the river to where it starts.</li>
+  <li><strong>Tap</strong> <span class="glyph inline">⋯</span> beside a tune, or press and hold it, to edit it.</li>
+</ul>
+</div>
+
+<div class="sub">
+<h3 id="fix-tune">Fixing a tune it got wrong</h3>
+
+<ol>
+  <li>
+    <p>
+      Tap <span class="glyph inline">⋯</span> beside the wrong tune in the current session — or press
+      and hold its name in the river itself (right-click it on a computer).
+    </p>
+    <figure class="sliver">
+      <img src="img/edit-tune-menu.png" width="812" height="604"
+           alt="A card titled Banish Misfortune, with jig · D Mixolydian · 7:58 PM · 3 min under it, and three buttons: Replace with…, Start new set here, and Delete. Beneath them: This edits the saved session. It can't be undone. Then Cancel.">
+      <figcaption>The card names the tune, its key, when it started and how long it ran.</figcaption>
+    </figure>
+  </li>
+  <li>
+    <p>
+      To name the right tune, press <span class="ui-btn">Replace with…</span>, type a few
+      letters of its name, and tap it. The tune keeps its place and the key it was
+      played in.
+    </p>
+    <figure class="sliver">
+      <img src="img/edit-tune-replace.png" width="812" height="470"
+           alt="The same card with a search box containing out on the ocean, and one result below it: Out On The Ocean, jig.">
+      <figcaption>Search works the way the main search does — "the kesh" finds The Kesh.</figcaption>
+    </figure>
+  </li>
+  <li>
+    <p>
+      To remove a tune that was never played — someone noodling, a fiddle being
+      tuned — press <span class="ui-btn">Delete</span>, then press it again: it asks twice so a
+      stray tap cannot remove anything.
+    </p>
+  </li>
+</ol>
+
+<aside class="hint">
+  <span class="hint-label">While you are listening</span>
+  <p>
+    <b>Your word wins.</b> Replace the tune that is playing and JigRipper takes you
+    at your word: the music, the lock screen and the watch all switch to it, and
+    stay on it until a different tune has clearly taken over. A tune you delete
+    stays deleted however long it goes on. Save the session and your corrections
+    are saved with it.
+  </p>
+  <p>
+    <b>On a saved session the change is permanent</b> — the card says so — and the
+    shared text follows it.
+  </p>
+</aside>
+</div>
+
+<div class="sub">
+<h3 id="regroup">Moving where a set starts or ends</h3>
+
+<figure class="sliver">
+  <img src="img/edit-tune-menu-sets.png" width="812" height="704"
+       alt="A card titled The Kesh, jig · G · 7:55 PM · 3 min, with buttons Replace with…, Move to previous set, Join previous set, and Delete, then the note This edits the saved session. It can't be undone, and Cancel.">
+  <figcaption>The first tune of a set offers to move it back into the set before.</figcaption>
+</figure>
+
+<p>
+  JigRipper starts a new set wherever the music stopped for a while. When that
+  guess is wrong, open the tune's <span class="glyph inline">⋯</span> menu. It offers only the
+  moves that make sense for where the tune sits:
+</p>
+
+<dl class="controls">
+  <dt><span class="ui-btn">Move to previous set</span></dt>
+  <dd>The first tune of a set joins the set before it; the rest stay a set of their own.</dd>
+  <dt><span class="ui-btn">Join previous set</span></dt>
+  <dd>The whole set joins the one before it.</dd>
+  <dt><span class="ui-btn">Move to next set</span></dt>
+  <dd>The last tune of a set becomes the first of the next.</dd>
+  <dt><span class="ui-btn">Start new set here</span></dt>
+  <dd>Splits the set so a new one begins with this tune.</dd>
 </dl>
 
 <p>
-  In a set you can rename it, reorder tunes with <strong>▲</strong> and
-  <strong>▼</strong>, and remove one with <strong>×</strong>. Tapping a tune in a
-  set opens its sheet music. Deleting a set is immediate and cannot be undone.
+  Tunes always stay in the order they were played — these moves only change where
+  one set ends and the next begins.
 </p>
+</div>
 
-<!-- ═══════════════════════════════════════════════════════════ -->
-<h2 id="upload">Listening to a recording</h2>
+<div class="sub">
+<h3 id="keep-set">Keeping a set</h3>
 
 <p>
-  The <strong>upload</strong> button hands JigRipper an audio file instead of the
+  Each set in the current session has two buttons. <span class="ui-pill">save to my sets</span>
+  copies it into your <a href="#library">sets</a>, named after its tunes; it then
+  reads <span class="ui-pill done">in my sets ✓</span>. <span class="ui-pill">select</span> plays from it — see
+  <a href="#play-set">Playing from a set</a>.
+</p>
+</div>
+
+<div class="sub">
+<h3 id="your-sets">Your sets</h3>
+
+<figure class="plate">
+  <img src="img/edit-sets-list.png" width="600" height="660"
+       alt="The Sets panel: a + New set button and a From river button, then two sets. The first is The Kesh / Out On The Ocean / Morrison's with its tunes listed under it; the second is Tuesday reels with Silver Spear, The · Drowsy Maggie. Each has three buttons: select, rename and delete.">
+  <figcaption>Open <span class="ui-pill">sets</span> from the search bar (or <span class="ui-pill">library ▾</span>).</figcaption>
+</figure>
+
+<dl class="controls">
+  <dt><span class="ui-pill">select</span></dt>
+  <dd>Plays from this set — see <a href="#play-set">Playing from a set</a>. It reads <span class="ui-pill on">selected ✓</span> while it is.</dd>
+  <dt><span class="ui-pill">rename</span></dt>
+  <dd>Type the new name, then press <span class="ui-pill">save</span> (or Done, or tap anywhere else).</dd>
+  <dt><span class="ui-pill">delete</span></dt>
+  <dd>Press it, then press <span class="ui-pill armed">tap again to delete</span> — the second press deletes the set.</dd>
+</dl>
+
+<figure class="plate">
+  <img src="img/edit-set-delete.png" width="600" height="176"
+       alt="The Tuesday reels set with its delete button turned red and reading tap again to delete.">
+  <figcaption>After the first press. Leave it a few seconds and it goes back to <span class="ui-pill">delete</span>.</figcaption>
+</figure>
+</div>
+
+<div class="sub">
+<h3 id="inside-set">Inside a set</h3>
+
+<figure class="plate">
+  <img src="img/edit-set-detail.png" width="600" height="800"
+       alt="A panel headed EDIT SET. A back arrow and the set's name, with select and rename buttons under it. Then the tunes numbered 1 to 3, each with up and down arrows and a cross, and a + Add tune button at the bottom.">
+  <figcaption>Tap a set to see its tunes.</figcaption>
+</figure>
+
+<ul>
+  <li><span class="glyph inline">▲</span> and <span class="glyph inline">▼</span> move a tune up or down the set; <span class="glyph inline">×</span> takes it out.</li>
+  <li><span class="ui-btn gold">+ Add tune</span> searches for one, or picks from your saved tunes.</li>
+  <li>Tap a tune to see its music — that selects the set as well, so the rest of it stays to hand.</li>
+  <li><span class="glyph inline">‹</span> goes back to the list.</li>
+</ul>
+
+<figure class="plate">
+  <img src="img/edit-set-rename.png" width="600" height="206"
+       alt="The set's name being edited in a text box, reading Kesh set, with a single save button underneath.">
+  <figcaption>Renaming. Press <span class="ui-pill">save</span> when you are done.</figcaption>
+</figure>
+</div>
+
+<div class="sub">
+<h3 id="play-set">Playing from a set</h3>
+
+<figure class="sliver">
+  <img src="img/edit-set-bar.png" width="860" height="600"
+       alt="A bar above the sheet music: the word SET, the name Kesh set and a cross, then three numbered buttons — 1 The Kesh (highlighted), 2 Out On The Ocean, 3 Morrison's. Below it the sheet music for The Kesh.">
+  <figcaption>A selected set sits above the music. The highlighted tune is the one on screen.</figcaption>
+</figure>
+
+<p>
+  Select a set before you play it and a bar of its tunes sits above the sheet
+  music. Tap a tune in the bar to see its music. <span class="glyph inline">×</span> puts the set
+  away again; a selected set is also put away when the app is closed.
+</p>
+
+<p>While JigRipper is listening, the set helps it:</p>
+
+<ul>
+  <li>The music still follows what you play, and the tune you are playing lights up in the bar.</li>
+  <li>The set's next tune has a dashed outline. JigRipper expects it, and recognises it sooner.</li>
+  <li>When it becomes unsure of the tune you are on, it shows the next tune's music — the likeliest thing to be coming — until it is sure what you are playing.</li>
+  <li>A tune that is not in the set has to play for a while before it takes over from one that is, so a moment of confusion does not pull you out of the set.</li>
+  <li>Tapping another tune in the bar shows its music for a look ahead; when the next tune starts, the music goes back to following you.</li>
+</ul>
+
+<p>
+  It never names a tune you are not playing: the set makes JigRipper quicker to
+  hear the tunes in it, and nothing more.
+</p>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<section class="part">
+<h2 id="upload">Analyzing an audio file</h2>
+
+<p>
+  The <span class="ui-pill">upload</span> button hands JigRipper an audio file instead of the
   microphone — a recording of a session, a track from an album, a voice memo. It
   accepts the usual formats (MP3, M4A, WAV, FLAC and others) up to twenty minutes long.
 </p>
 
 <p>
   It takes longer than live listening, and shows its progress. When it finishes
-  you get <strong>Deep listen complete</strong> and a list of the strongest
+  you get <span class="ui-text">Deep listen complete</span> and a list of the strongest
   candidates grouped by tune type, each one a link to thesession.org so you can
-  check it against the real thing. <strong>View river</strong> puts the results
+  check it against the real thing. <span class="ui-btn">View river</span> puts the results
   into the river.
 </p>
 
@@ -806,52 +1348,373 @@ footer.colophon p { margin-bottom: var(--f2); }
     collapses all of that into one signal before the microphone ever hears it.
   </p>
 </aside>
+</section>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+<section class="part">
+<h2 id="watch">On your watch</h2>
+
+<p>
+  JigRipper has a companion app for <strong>Apple Watch</strong> and another for
+  <strong>Wear OS</strong> watches — the Android ones, made by Samsung, Google,
+  Fossil and others. Both show the tune your phone is hearing, and both start and
+  stop listening from your wrist. They are not the same app, and they do not do
+  quite the same things — a watch is only allowed to reach so far into its phone,
+  and the two platforms draw that line in different places.
+</p>
+
+<p>
+  Neither watch listens. The phone does all the hearing and all the identifying.
+  The watch is a window onto it and a remote control; nothing is recorded on your
+  wrist.
+</p>
+
+<p>
+  What follows is the same for both, then a section for
+  <a href="#watch-apple">Apple Watch</a> and a section for
+  <a href="#watch-wear">Wear OS</a>. You only need your own.
+</p>
+
+<div class="sub">
+<h3 id="watch-what-you-see">What you see on the wrist</h3>
+
+<figure class="wrist">
+  <img src="img/watch-apple-tune.png"
+       alt="A rounded-rectangular Apple Watch screen on a near-black background: the word JIGRIPPER in small spaced capitals at the top, the tune name Drowsy Maggie beneath it, a short gold bar, the line Reel · 4/4 · E Dorian, and at the bottom a rounded outlined button reading Stop. A faint woven ring runs behind it all.">
+  <figcaption>
+    The watch app while a tune is locked. The short bar under the name is gold, so
+    the phone has settled on something.
+  </figcaption>
+</figure>
+
+<p>Both watch apps are laid out the same way, top to bottom:</p>
+
+<ul>
+  <li><span class="ui-text">JIGRIPPER.</span> The wordmark. Always there.</li>
+  <li><strong>The tune.</strong> Its name, then a short coloured bar, then its
+      type, time signature and key — <em>Reel · 4/4 · E Dorian</em>. Before the
+      phone settles on anything you get <span class="ui-text">Listening…</span>,
+      <span class="ui-text">Background noise</span> or <span class="ui-text">Silence</span> in the name's
+      place.</li>
+  <li><strong>The bar's colour</strong> carries the same meaning as the status
+      line on the phone: gold once it has locked onto a tune, silver-green while
+      it is still listening, weathered grey on noise or silence.</li>
+  <li><strong>One button.</strong> <span class="ui-btn fill">Listen</span>, filled gold, when the
+      phone is not listening. <span class="ui-btn outline">Stop</span>, outlined silver-green, while
+      it is. <span class="ui-btn">Cancel</span> for the few seconds a start is still on its
+      way to the phone.</li>
+  <li><strong>The woven ring behind everything</strong> is the phone's listen
+      ring, dimmed. It runs loose while listening and settles outward when a tune
+      locks.</li>
+</ul>
+
+<p>
+  When your wrist drops, both watches dim: the tune name stays readable in grey,
+  the coloured bar and the button go, and the ring stops moving. Raise your wrist
+  and the colour comes straight back. A Wear OS watch will hold the app there for
+  as long as you leave it; an Apple Watch goes back to its watch face on its own
+  after a couple of minutes, which is why it has a card in the Smart Stack.
+</p>
+
+<aside class="hint">
+  <span class="hint-label">Not on the watch face</span>
+  <p>
+    <b>JigRipper does not add anything to the watch face itself.</b> There is no
+    complication to add on either platform. On an Apple Watch the glance is the
+    <a href="#watch-apple">Smart Stack card</a>; on a Wear OS watch it is the
+    <a href="#watch-tile">tile</a>.
+  </p>
+</aside>
+</div>
+
+<div class="sub">
+<h3 id="watch-starting-stopping">Starting and stopping</h3>
+
+<p>
+  Tap <span class="ui-btn fill">Listen</span>. The watch shows <span class="ui-text">Starting…</span> while the
+  phone wakes up and gets itself ready — the first start after the app has been
+  closed can take several seconds, and the watch may say
+  <span class="ui-text">Loading models…</span> while it waits. Once the phone is really
+  listening, the wrist changes to <span class="ui-text">Listening…</span> and then to the tune.
+  If the phone never answers at all, the watch gives up and goes back to
+  <span class="ui-btn fill">Listen</span> after about half a minute.
+</p>
+
+<p>
+  <span class="ui-btn outline">Stop</span> always reaches the phone, as long as the app is still
+  running — and it is, if it is listening.
+</p>
+
+<p>
+  Whether you can start a session while the phone is <em>locked in your pocket</em>
+  is the sharpest difference between the two platforms, and it is covered in each
+  section below.
+</p>
+
+<aside class="hint">
+  <span class="hint-label">Before the first time from your wrist</span>
+  <p>
+    <b>Start JigRipper once on the phone and let it listen.</b> That gets the
+    microphone permission out of the way. A phone sitting behind its own
+    microphone dialog cannot start listening, and from your wrist that looks like
+    nothing happening at all. The watch may manage to tell you —
+    <b>Allow microphone on phone</b> — but it is not worth relying on.
+  </p>
+</aside>
+
+<!-- ─────────────────────────  APPLE WATCH  ───────────────────────── -->
+</div>
+
+<div class="sub">
+<h3 id="watch-apple">Apple Watch</h3>
+
+<p>
+  Apple Watches run <strong>watchOS</strong>. The Smart Stack card needs
+  <strong>watchOS 11 or later</strong>; everything else here works on older
+  versions too.
+</p>
+
+<h4>Setting it up</h4>
+
+<p>
+  The watch app travels inside the iPhone app. There is nothing separate to
+  download.
+</p>
+
+<ol>
+  <li>Pair the watch with your iPhone in the usual way, if you have not already.</li>
+  <li>Install or update JigRipper on the iPhone. The watch app comes with it.</li>
+  <li>Look for JigRipper on the watch. If it is not there, open the
+      <strong>Watch</strong> app on the iPhone: either turn on
+      <span class="ui-text">Automatic App Install</span> under <span class="ui-text">General</span>, or
+      scroll down to <span class="ui-text">Available Apps</span> and install JigRipper by
+      hand.</li>
+  <li>Open it once on the watch and once on the phone, so the two introduce
+      themselves to each other.</li>
+</ol>
+
+<p>
+  An iPad cannot pair with an Apple Watch, so none of this applies to an iPad —
+  everything else in the app works there as normal.
+</p>
+
+<h4>The card in the Smart Stack</h4>
+
+<figure class="wrist">
+  <img src="img/watch-smart-stack.png" width="368" height="448"
+       alt="An Apple Watch Smart Stack under the date and a clock: a card with a gold dot at the left, the tune name Alexander's on the first line, and Hornpipe · 4/4 · D Ionian in grey underneath.">
+  <figcaption>
+    The same session seen in the Smart Stack — a turn of the Digital Crown from
+    the watch face.
+  </figcaption>
+</figure>
+
+<p>
+  An Apple Watch will not keep an app on screen: watchOS goes back to the watch
+  face after a couple of minutes, whatever you would rather it did. So the thing
+  to glance at during a session is not the app but the card.
+</p>
+
+<p>
+  While the phone is listening it puts a card on its own lock screen, and on
+  <strong>watchOS 11 or later</strong> that card also appears in the watch's
+  <strong>Smart Stack</strong> — turn the Digital Crown upwards from the watch
+  face. It shows a coloured dot, the tune, and its type and key. It arrives on its
+  own when a session starts and goes when you stop. There is nothing to set up.
+</p>
+
+<p>
+  If a session ends without the phone getting the chance to say so — it was shut
+  down, or the phone closed it to free up memory — the card changes to
+  <span class="ui-text">Session ended</span> rather than sitting on the last tune it knew
+  about.
+</p>
+
+<h4 id="watch-unlock">When the iPhone is locked</h4>
+
+<figure class="wrist">
+  <img src="img/watch-unlock-iphone.png"
+       alt="The same Apple Watch screen, with JIGRIPPER at the top, then the words Unlock iPhone on one line and to start listening in grey beneath. There is no button.">
+  <figcaption>
+    What an Apple Watch shows when you ask a locked iPhone to start listening. The
+    button is deliberately absent: there is nothing it could do.
+  </figcaption>
+</figure>
+
+<aside class="hint">
+  <span class="hint-label">An Apple Watch cannot wake your iPhone</span>
+  <p>
+    <b>No watch can</b> — it is not something JigRipper is able to work around, and
+    it is the sharpest difference between the two companions. With the iPhone
+    unlocked, a tap on <b>Listen</b> starts a session even if the app was closed.
+    With the iPhone locked, the microphone cannot be opened at all, so instead of
+    pretending, the watch reads <b>Unlock iPhone — to start listening</b> and a
+    <b>Tap to start listening</b> notice appears on the iPhone's lock screen.
+    Unlock the phone and listening usually begins by itself; if it does not, tap
+    that notice. The message on the watch clears after about a minute, so if you
+    come back to it later, just tap <b>Listen</b> again.
+  </p>
+</aside>
+
+<h4>A buzz when it finds a tune</h4>
+
+<p>
+  Your wrist is tapped each time JigRipper locks onto a different tune, which is
+  what makes a session in your pocket worth wearing. To turn it off, go to
+  settings, <strong>Apple Watch</strong>, <span class="ui-text">Vibrate on a new tune</span>.
+  The watch and the lock-screen card carry on updating either way — only the buzz
+  stops.
+</p>
+
+<!-- ─────────────────────────  WEAR OS  ───────────────────────── -->
+</div>
+
+<div class="sub">
+<h3 id="watch-wear">Wear OS</h3>
+
+<p>
+  <strong>Wear OS</strong> is Google's watch system, used by Samsung Galaxy
+  Watches, Google Pixel Watches and others. It was called Android Wear years ago;
+  you may still see that name written down.
+</p>
+
+<h4>Setting it up</h4>
+
+<p>
+  Here the watch app is a genuinely separate download. Installing JigRipper on the
+  phone does not put it on the watch.
+</p>
+
+<ol>
+  <li>Pair the watch with your phone in the usual way, if you have not already.</li>
+  <li>Install JigRipper on the phone.</li>
+  <li><strong>On the watch itself,</strong> open the Play Store, find JigRipper,
+      and install it there too.</li>
+  <li>Open it once on the watch and once on the phone.</li>
+</ol>
+
+<h4 id="watch-tile">Adding the tile</h4>
+
+<figure class="wrist round">
+  <img src="img/watch-wear-tile.png" width="456" height="456"
+       alt="A round Wear OS tile on a near-black background. The word JIGRIPPER is inscribed along the curve of the top edge between two short gold arcs; in the middle is the tune name Young Tom Ennis with Jig · 6/8 · A Dorian under it and the words Tap to open beneath that; a gold arc curves along the bottom edge.">
+  <figcaption>
+    The tile mid-session. Tapping anywhere on it opens the watch app.
+  </figcaption>
+</figure>
+
+<p>
+  A Wear OS watch has a row of <strong>tiles</strong> beside the watch face, and
+  JigRipper offers one. It is a glance, not a control: it shows the tune the phone
+  is hearing, and tapping it opens the watch app, where the button that starts
+  and stops listening lives. Tapping the tile does not start or stop listening
+  itself.
+</p>
+
+<ol>
+  <li>From the watch face, swipe sideways until you reach the row of tiles.</li>
+  <li>Press and hold any tile until they shrink down.</li>
+  <li>Swipe along to the <span class="glyph inline">+</span> at the end of the row and tap it.</li>
+  <li>Find <span class="ui-text">JigRipper</span> in the list and tap it.</li>
+  <li>Swipe back, or press the crown. The tile now sits in the row for good.</li>
+</ol>
+
+<p>
+  The exact wording varies between watches, and some let you arrange tiles from
+  the watch's own app on your phone instead. Either way the tile stays current
+  while the watch app is closed — the phone keeps it up to date in the background.
+  It is a snapshot the watch refreshes on its own schedule, though, so it can run
+  a few seconds behind. Open the app for the live view.
+</p>
+
+<h4>Starting with the phone locked</h4>
+
+<p>
+  <strong>This works with the phone locked in your pocket.</strong> The phone
+  lights up, shows JigRipper over its lock screen, and starts listening. You do
+  not have to unlock it or touch it. This is the one thing a Wear OS watch can do
+  that an Apple Watch cannot.
+</p>
+
+<h4>No buzz</h4>
+
+<p>
+  A Wear OS watch never buzzes when a new tune is found, so there is nothing there
+  to turn off. Raise your wrist, or glance at the tile.
+</p>
+
+<!-- ─────────────────────────  SHARED  ───────────────────────── -->
+</div>
+
+<div class="sub">
+<h3 id="watch-when-wrist-phone">When the wrist and the phone disagree</h3>
+
+<ul>
+  <li><strong>The watch is showing a tune you have finished with.</strong> Tap
+      <span class="ui-btn outline">Stop</span> on the watch. That returns the wrist to the
+      <span class="ui-btn fill">Listen</span> button whatever the phone believes.</li>
+  <li><strong>A Wear OS tile is a little behind.</strong> Expected — see
+      <a href="#watch-tile">Adding the tile</a> above. Open the watch app for the live
+      view.</li>
+  <li><strong>Nothing at all on the watch.</strong> The two halves have to be
+      installed as a pair, and the watch has to be paired and in range. Open
+      JigRipper on the phone, then on the watch, and try again.</li>
+</ul>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+
+<section class="part">
 <h2 id="settings">Settings worth knowing</h2>
 
 <p>
   Open settings with the gear button at the end of the search bar — it reads
-  <strong>⚙︎ settings</strong> when there is room, and just <strong>⚙︎</strong> on
+  <span class="ui-pill">⚙︎ settings</span> when there is room, and just <span class="ui-pill">⚙︎</span> on
   a narrow screen. Most of what is in there is best left alone; these are the
   ones worth a look.
 </p>
 
 <dl class="controls">
-  <dt>High-contrast mode</dt>
-  <dd>Brighter, bolder and larger text throughout the app. Under <strong>Display</strong>.</dd>
-  <dt>Staff</dt>
+  <dt><span class="ui-text">High-contrast mode</span></dt>
+  <dd>Brighter, bolder and larger text throughout the app. Under <span class="ui-text">Display</span>.</dd>
+  <dt><span class="ui-text">Staff</span></dt>
   <dd>Treble, bass, alto or tenor clef for all the sheet music. The non-treble
-      clefs shift the octave so the notes stay on the staff. Under <strong>Sheet music</strong>.</dd>
-  <dt>Page</dt>
+      clefs shift the octave so the notes stay on the staff. Under <span class="ui-text">Sheet music</span>.</dd>
+  <dt><span class="ui-text">Page</span></dt>
   <dd>Dark or Paper for the sheet music — light notes on the app's dark
-      background, or black notes on a pale page. Under <strong>Sheet music</strong>;
+      background, or black notes on a pale page. Under <span class="ui-text">Sheet music</span>;
       see <a href="#sheet-page">Dark or paper</a>.</dd>
-  <dt>Microphone</dt>
+  <dt><span class="ui-text">Microphone</span></dt>
   <dd>Which microphone to listen through, if you have more than one — a clip-on
       mic or a USB interface will hear far better than a phone across the room.
-      Under <strong>Input</strong>; see <a href="#input">Choosing a microphone</a>.</dd>
-  <dt>Temperament</dt>
+      Under <span class="ui-text">Input</span>; see <a href="#input">Choosing a microphone</a>.</dd>
+  <dt><span class="ui-text">Temperament</span></dt>
   <dd>For the tuner. Equal temperament by default; just intonation reads zero
-      cents on pure intervals above a root you choose. Under <strong>Tuner</strong>.</dd>
-  <dt>Noise suppression</dt>
+      cents on pure intervals above a root you choose. Under <span class="ui-text">Tuner</span>.</dd>
+  <dt><span class="ui-text">Noise suppression</span></dt>
   <dd>On by default. Stops JigRipper hearing a tune in an air conditioner. Leave it on.</dd>
-  <dt>Instrument presence</dt>
+  <dt><span class="ui-text">Instrument presence</span></dt>
   <dd>On by default. Shows which instruments it thinks it can hear while you play.</dd>
+  <dt><span class="ui-text">Vibrate on a new tune</span></dt>
+  <dd>iPhone only, on by default. Taps your wrist each time it locks onto a
+      different tune. Under <strong>Apple Watch</strong>; see
+      <a href="#watch">On your watch</a>.</dd>
 </dl>
 
 <p>
-  The rest of the <strong>Audio engine</strong> section is the listening
+  The rest of the <span class="ui-text">Audio engine</span> section is the listening
   machinery itself. It ships set the way it works best. If you change something
   and things get worse, the hint under each switch tells you what the default was.
 </p>
 
+<div class="sub">
 <h3 id="input">Choosing a microphone</h3>
 
 <p>
-  Under <strong>Input</strong> is a list of every microphone the device can
+  Under <span class="ui-text">Input</span> is a list of every microphone the device can
   see: the built-in one, anything plugged in, and on a computer whatever the
-  browser has been allowed to use. <strong>System default</strong> means
+  browser has been allowed to use. <span class="ui-text">System default</span> means
   whatever the phone or browser would use on its own, which is right for most
   people. Pick a specific one when there is a better one to be had:
 </p>
@@ -884,29 +1747,34 @@ footer.colophon p { margin-bottom: var(--f2); }
 
 <p>
   If the microphone you chose is unplugged, it stays in the list by name, marked
-  <strong>not connected</strong>, and JigRipper listens through the system
+  <span class="ui-text">not connected</span>, and JigRipper listens through the system
   default until it comes back — plugging it in again picks it up without
   changing the setting. Choose any other input to forget it.
 </p>
+</div>
+</section>
 
 <!-- ═══════════════════════════════════════════════════════════ -->
+
+<section class="part">
 <h2 id="trouble">When it goes wrong</h2>
 
-<h3>It is not hearing me</h3>
+<div class="sub">
+<h3 id="trouble-not-hearing-me">It is not hearing me</h3>
 
 <p>First, the microphone. JigRipper will tell you if it cannot get one:</p>
 
 <ul>
-  <li><strong>“Microphone access is blocked”</strong> — your browser or phone is
+  <li><span class="ui-text">“Microphone access is blocked”</span> — your browser or phone is
       refusing. Allow the microphone in its settings, then tap the ring again.</li>
-  <li><strong>“No microphone found”</strong> — there is no input device at all.</li>
+  <li><span class="ui-text">“No microphone found”</span> — there is no input device at all.</li>
 </ul>
 
 <p>
-  If the status says <strong>silence</strong>, it is not getting enough level.
+  If the status says <span class="ui-text">silence</span>, it is not getting enough level.
   Move closer, or pick a different microphone in settings (see
   <a href="#input">Choosing a microphone</a>). If it says
-  <strong>noise</strong>, it can hear sound but has decided it is not music yet.
+  <span class="ui-text">noise</span>, it can hear sound but has decided it is not music yet.
 </p>
 
 <aside class="hint">
@@ -919,8 +1787,10 @@ footer.colophon p { margin-bottom: var(--f2); }
     crowded room, a television, another instrument close by playing something else.
   </p>
 </aside>
+</div>
 
-<h3>It is showing the wrong tune</h3>
+<div class="sub">
+<h3 id="trouble-showing-wrong-tune">It is showing the wrong tune</h3>
 
 <p>
   It happens. There are over twenty thousand tunes in the collection and a great
@@ -935,15 +1805,17 @@ footer.colophon p { margin-bottom: var(--f2); }
   <li><strong>Get the microphone closer</strong> to the instrument.</li>
   <li><strong>Check the alternatives.</strong> If a name looks wrong, search for
       the tune you believe it is and compare the music side by side. The
-      <strong>↗</strong> button opens thesession.org, which is the source of the notation.</li>
+      <span class="glyph inline">↗</span> button opens thesession.org, which is the source of the notation.</li>
 </ul>
 
 <p>
   Playing a recording out loud for JigRipper to hear is the hardest case of all,
   and the least reliable. Upload the file instead if you have it.
 </p>
+</div>
 
-<h3>It is showing the wrong key</h3>
+<div class="sub">
+<h3 id="trouble-showing-wrong-key">It is showing the wrong key</h3>
 
 <aside class="hint">
   <span class="hint-label">Usually not an error</span>
@@ -960,13 +1832,18 @@ footer.colophon p { margin-bottom: var(--f2); }
   worth checking. Use the key buttons above the sheet to look at the settings in
   the key you actually played.
 </p>
+</div>
 
-<h3>The music on screen keeps changing</h3>
+<div class="sub">
+<h3 id="trouble-music-screen-keeps">The music on screen keeps changing</h3>
 
 <p>
   That is the sheet following what it hears. Tap the clasp at the top left, or
   long press the music, to hold it still.
 </p>
+</div>
+
+</section>
 
 </main>
 
