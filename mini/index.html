@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JigRipper Mini</title>
+<!--
+  jigripper.com/mini/ → the mini player, which is the app itself in mini mode
+  (/?mini=1 — see src/mini/mini-mode.ts). Query options pass through:
+  /mini/?embed=1&theme=light → /?mini=1&embed=1&theme=light.
+-->
+<script>
+  (function () {
+    var q = location.search ? '&' + location.search.slice(1) : '';
+    location.replace('../?mini=1' + q);
+  })();
+</script>
+<meta http-equiv="refresh" content="0; url=../?mini=1">
+<style>
+  :root { color-scheme: dark; }
+  body { background: #0A0E0D; color: #8E9C91; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 34px 16px; }
+  a { color: #8FBFA0; }
+</style>
+</head>
+<body>
+  <p><a href="../?mini=1">Open JigRipper Mini</a></p>
+</body>
+</html>

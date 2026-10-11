@@ -179,6 +179,60 @@ function subtractDroneFloor(tensors, nWindows) {
     }
 }
 
+/* ── Model storage (Cache API) ─────────────────────────────────────────
+ * "One-time download" has to be true. Left to the browser's ordinary HTTP
+ * cache it was not: the model ships as two ~64 MB shards and browsers decline to
+ * keep single entries that big (Firefox caps an entry at 50 MB; Chrome at an
+ * eighth of its cache, often less), so visitors re-downloaded ~130 MB on every
+ * visit. (Operator, 2026-10-11: "if it's a one-time download, why does it
+ * download every time?")
+ *
+ * So the model files go into the Cache API, which has no per-entry limit and
+ * ignores HTTP cache headers. Keyed by the full URL, `?v=` token included, so a
+ * new model (an ASSET_VERSIONS.modelDir bump) is a new key and downloads fresh;
+ * stores from older versions are deleted at init. Anything that goes wrong here
+ * (no Cache API, quota, a third-party iframe with a small allowance) falls back
+ * to a plain network fetch — storage must never be able to stop the model. */
+const MODEL_STORE_PREFIX = 'jigripper-model-';
+let _modelStore = null;
+
+async function openModelStore(version) {
+    if (!self.caches) return null;
+    const name = MODEL_STORE_PREFIX + (version || 'unversioned');
+    try {
+        const keys = await self.caches.keys();
+        for (const k of keys) if (k.startsWith(MODEL_STORE_PREFIX) && k !== name) self.caches.delete(k);
+        return await self.caches.open(name);
+    } catch (e) {
+        _dlog('[model-store] unavailable: ' + (e && e.message));
+        return null;
+    }
+}
+
+/** fetch(), but a model file comes from (and goes into) the model store. */
+async function modelFetch(url, opts) {
+    const store = _modelStore;
+    if (store) {
+        try {
+            const hit = await store.match(url);
+            if (hit) { _dlog('[model-store] hit ' + url); return hit; }
+        } catch (e) { /* fall through to the network */ }
+    }
+    const r = await fetch(url, opts);
+    if (!store || !r.ok || !r.body || typeof r.body.tee !== 'function') return r;
+    // One branch streams to the caller (download progress), the other into the
+    // store. The stored copy is DECODED bytes, so the transfer headers that
+    // describe the encoded stream (content-encoding/-length) are dropped.
+    const [toCaller, toStore] = r.body.tee();
+    const headers = new Headers(r.headers);
+    headers.delete('content-encoding');
+    headers.delete('content-length');
+    store.put(url, new Response(toStore, { status: 200, headers }))
+        .then(() => _dlog('[model-store] stored ' + url))
+        .catch((e) => _dlog('[model-store] not stored (' + (e && e.message) + ') ' + url));
+    return new Response(toCaller, { status: r.status, statusText: r.statusText, headers: r.headers });
+}
+
 /* ── Initialization ─────────────────────────────────────────────────── */
 
 async function fetchJson(url) {
@@ -207,6 +261,7 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, was
     // change). Empty token → no query → identical to the un-versioned behaviour.
     const wasmV = wasmVersion ? `?v=${wasmVersion}` : '';
     const modelV = modelVersion ? `?v=${modelVersion}` : '';
+    _modelStore = await openModelStore(modelVersion);
 
     importScripts(`${_baseUrl}/hcqt_fold12.js`);
     importScripts(`${_baseUrl}/ort.min.js`);
@@ -291,7 +346,7 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, was
     // ── Fetch helpers: each returns a single Uint8Array on success ──
     async function fetchSingle({ url, sameOrigin, label }, postProgress) {
         try {
-            const r = await fetch(url, sameOrigin ? { credentials: 'same-origin' } : undefined);
+            const r = sameOrigin ? await modelFetch(url, { credentials: 'same-origin' }) : await fetch(url);
             if (!r.ok) return { buf: null, reason: `HTTP ${r.status}` };
             const ct = r.headers.get('content-type') ?? '';
             if (ct.includes('text/html') || ct.includes('application/json')) {
@@ -332,7 +387,7 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, was
             const partLoaded = new Array(urls.length).fill(0);
             const partTotal = new Array(urls.length).fill(0);
             const parts = await Promise.all(urls.map(async (u, i) => {
-                const r = await fetch(u, { credentials: 'same-origin' });
+                const r = await modelFetch(u, { credentials: 'same-origin' });
                 if (!r.ok) throw new Error(`shard ${i} (${u}) → HTTP ${r.status}`);
                 const ct = r.headers.get('content-type') ?? '';
                 if (ct.includes('text/html') || ct.includes('application/json')) {
