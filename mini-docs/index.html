@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JigRipper Mini</title>
+<meta name="description" content="Put JigRipper on your own site: a search-box-sized listen ring that names the Irish traditional tune being played. One element and one script tag.">
+<link rel="canonical" href="https://www.jigripper.com/mini-docs/">
+<!--
+  jigripper.com/mini-docs/ — the demo of, and instructions for, embedding
+  JigRipper Mini on another site. (/mini/ opens the widget on its own.)
+
+  The widget is the app in mini mode (/?mini=1 — src/mini/mini-mode.ts). The two
+  demos below are placed exactly the way another site places them: an element
+  plus mini/embed.js. embed.js is loaded RELATIVE here so the page also works on
+  a dev server; the snippet shown to site owners is the absolute URL.
+-->
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #0A0E0D;
+    --surface: #141C19;
+    --rule: rgba(143, 191, 160, 0.16);
+    --text: #E8E4DA;
+    --text-2: #A9B4AB;
+    --text-3: #7A8B7E;
+    --gold: #C9A84C;
+    --silver: #8FBFA0;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(143, 191, 160, 0.06), transparent 60%), var(--page);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    line-height: 1.6;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 55px 16px 89px; }
+  .eyebrow { font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin: 0; }
+  h1 { font-size: 34px; font-weight: 300; letter-spacing: 0.01em; margin: 8px 0 0; }
+  h2 { font-size: 13px; font-weight: 400; letter-spacing: 0.16em; text-transform: uppercase; color: var(--silver);
+       margin: 55px 0 13px; padding-bottom: 8px; border-bottom: 1px solid var(--rule); }
+  p { color: var(--text-2); margin: 0 0 13px; }
+  .lede { font-size: 17px; color: var(--text-2); max-width: 36em; margin-top: 13px; }
+  a { color: var(--silver); }
+  a:hover { color: var(--gold); }
+
+  /* ── The two "someone else's site" demos ── */
+  .site { margin-top: 21px; border-radius: 13px; overflow: hidden; box-shadow: 0 13px 34px rgba(0, 0, 0, 0.35); }
+  .site-bar { display: flex; align-items: center; gap: 6px; padding: 8px 13px; font-size: 12px; }
+  .site-bar i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .site-bar span { margin-left: 8px; opacity: 0.7; }
+  .site-body { padding: 21px 21px 26px; }
+  .site-body h3 { margin: 0 0 4px; font-weight: 400; }
+  .site-body .meta { font-size: 13px; margin: 0 0 13px; }
+  .site-body p { margin: 13px 0 0; }
+
+  .site.light { background: #FBF8F1; color: #2B2A27; }
+  .site.light .site-bar { background: #ECE7DC; color: #5C5850; }
+  .site.light .site-bar i { background: #D3CCBE; }
+  .site.light .site-body { font-family: Georgia, "Times New Roman", serif; }
+  .site.light .site-body h3 { font-size: 24px; }
+  .site.light .site-body .meta, .site.light .site-body p { color: #5C5850; }
+
+  .site.dark { background: #1B1D22; color: #E3E3E6; }
+  .site.dark .site-bar { background: #26292F; color: #A7A9B0; }
+  .site.dark .site-bar i { background: #3A3E46; }
+  .site.dark .site-body h3 { font-size: 20px; }
+  .site.dark .site-body .meta, .site.dark .site-body p { color: #A7A9B0; }
+
+  /* ── Code ── */
+  .code { position: relative; margin: 13px 0 21px; background: var(--surface); border: 1px solid var(--rule); border-radius: 13px; }
+  .code pre { margin: 0; padding: 16px 18px; padding-right: 80px; overflow-x: auto;
+    font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); }
+  .copy { position: absolute; top: 8px; right: 8px; font: inherit; font-size: 12px; letter-spacing: 0.06em;
+    color: var(--silver); background: rgba(143, 191, 160, 0.08); border: 1px solid var(--rule);
+    border-radius: 999px; padding: 3px 12px; cursor: pointer; }
+  .copy:hover { color: var(--gold); }
+  code.inline { font: 0.88em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    background: rgba(143, 191, 160, 0.1); color: var(--text); padding: 1px 5px; border-radius: 4px; }
+  ul { color: var(--text-2); padding-left: 20px; margin: 0 0 13px; }
+  li { margin-bottom: 6px; }
+  strong { color: var(--text); font-weight: 500; }
+  footer { margin-top: 55px; font-size: 13px; color: var(--text-3); }
+  footer a { color: var(--text-2); }
+  @media (max-width: 480px) {
+    main { padding-top: 34px; }
+    h1 { font-size: 28px; }
+    .site-body { padding: 16px 14px 21px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="eyebrow">JigRipper Mini</p>
+  <h1>Name that tune, on your own site</h1>
+  <p class="lede">
+    A listen ring the size of a search box. Your visitors tap it, play a few bars of an Irish
+    traditional tune, and it tells them which one it is, with a link to the tune on
+    <a href="https://thesession.org">The Session</a>. It is the
+    <a href="https://www.jigripper.com/">JigRipper</a> app, in miniature.
+  </p>
+
+  <h2>Try it</h2>
+  <p>Two made-up websites, each with JigRipper Mini placed in it using the two lines of code below.</p>
+
+  <div class="site light">
+    <div class="site-bar"><i></i><i></i><i></i><span>yourtunesite.example</span></div>
+    <div class="site-body">
+      <h3>Tuesday night session</h3>
+      <p class="meta">Upstairs at the pub · from 9 o'clock</p>
+      <div class="jigripper-mini"></div>
+      <p>Heard a tune you didn't know? Tap the ring and play it back.</p>
+    </div>
+  </div>
+
+  <div class="site dark">
+    <div class="site-bar"><i></i><i></i><i></i><span>a-darker-site.example</span></div>
+    <div class="site-body">
+      <h3>Learn a tune a week</h3>
+      <p class="meta">The widget takes its colours from the page it sits on.</p>
+      <div class="jigripper-mini"></div>
+    </div>
+  </div>
+
+  <h2>Add it to your site</h2>
+  <p>It's free, under our <a href="/terms/">terms of use</a>. Put this where you want the widget to appear:</p>
+  <div class="code">
+    <button class="copy" type="button" data-copy="snippet">Copy</button>
+    <pre id="snippet">&lt;div class="jigripper-mini"&gt;&lt;/div&gt;
+&lt;script src="https://www.jigripper.com/mini/embed.js" async&gt;&lt;/script&gt;</pre>
+  </div>
+  <ul>
+    <li>Use the <code class="inline">div</code> as many times as you like; one script tag serves them all.</li>
+    <li>It picks light or dark from your page. To choose, add <code class="inline">data-theme="light"</code>
+      or <code class="inline">data-theme="dark"</code> to the <code class="inline">div</code>.</li>
+    <li>"Open on The Session" opens the tune in a new tab, so your visitors keep your page. To open it in
+      the same tab instead, add <code class="inline">data-session-links="same-tab"</code> to the
+      <code class="inline">div</code> (<code class="inline">"new-tab"</code> is the default).</li>
+    <li>It is up to 536 pixels wide and 92 tall, and narrows to fit a phone.</li>
+    <li>Adding the element after the page has loaded, as single-page apps do? Call
+      <code class="inline">JigRipperMini.mount()</code> once it is in the page.
+      <code class="inline">JigRipperMini.open()</code> opens a widget as if it had been tapped.</li>
+  </ul>
+
+  <p>For example, a dark widget whose tune links open in the same tab:</p>
+  <div class="code">
+    <button class="copy" type="button" data-copy="options">Copy</button>
+    <pre id="options">&lt;div class="jigripper-mini"
+     data-theme="dark"
+     data-session-links="same-tab"&gt;&lt;/div&gt;
+&lt;script src="https://www.jigripper.com/mini/embed.js" async&gt;&lt;/script&gt;</pre>
+  </div>
+
+  <p>If your site's security settings don't allow scripts from other sites, use this one tag instead:</p>
+  <div class="code">
+    <button class="copy" type="button" data-copy="iframe">Copy</button>
+    <pre id="iframe">&lt;iframe src="https://www.jigripper.com/mini/embed/" allow="microphone; autoplay"
+        title="JigRipper Mini" loading="lazy"
+        style="width:100%;max-width:536px;height:92px;border:0"&gt;&lt;/iframe&gt;</pre>
+  </div>
+  <p>The same options go on the end of the iframe's address: <code class="inline">?theme=light</code> for
+    the light style, <code class="inline">?links=same</code> to open tune links in the same tab, or both:
+    <code class="inline">?theme=light&amp;links=same</code>.</p>
+
+  <h2>What your visitors get</h2>
+  <ul>
+    <li><strong>Almost nothing loads until they tap.</strong> Before that the widget is a small card from
+      jigripper.com, a few kilobytes. JigRipper itself waits for the tap.</li>
+    <li><strong>A one-time download.</strong> The first tap downloads JigRipper's tune model, about
+      130&nbsp;MB, which the browser keeps. A second tap, inside the widget, starts listening.</li>
+    <li><strong>Private.</strong> What they play is heard on their own device. It is never recorded and
+      never sent anywhere, and the widget sets no cookies on your site.</li>
+    <li><strong>The real thing.</strong> The same tune recognition as the JigRipper app, which knows
+      over 22,000 tunes.</li>
+  </ul>
+
+  <p>Or <a href="/mini/">open JigRipper Mini on its own</a>.</p>
+
+  <footer>
+    JigRipper is made by Séisionnach LLC · <a href="mailto:hello@seisionnach.com">hello@seisionnach.com</a><br>
+    Tune data from <a href="https://thesession.org">The Session</a>, ODbL 1.0 ·
+    <a href="/privacy">Privacy</a> · <a href="/terms/">Terms</a>
+  </footer>
+</main>
+
+<script src="../mini/embed.js" async></script>
+<script>
+  document.querySelectorAll('[data-copy]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var text = document.getElementById(b.getAttribute('data-copy')).textContent;
+      var done = function () { b.textContent = 'Copied'; setTimeout(function () { b.textContent = 'Copy'; }, 1500); };
+      if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+    });
+  });
+</script>
+</body>
+</html>

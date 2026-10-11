@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>JigRipper Mini</title>
+<!--
+  JigRipper Mini's placeholder card, framed by mini/embed.js or by a site's own
+  <iframe>. It is a few KB and loads nothing else. A tap frames the widget
+  itself, the app in mini mode (/?mini=1&embed=1&autostart=1), over this card,
+  which stays until the widget has drawn so there is no blank flash.
+
+  Options: ?theme=light, &links=same. JigRipperMini.open() on the parent page
+  sends {jigripperMini: 'open'}. Pages that point here never update, so these
+  must keep working.
+
+  © 2026 Séisionnach LLC — https://www.jigripper.com/terms/
+-->
+<script>
+  // Before first paint, so the card never flashes the wrong theme.
+  (function () {
+    var q = new URLSearchParams(location.search);
+    document.documentElement.className = q.get('theme') === 'light' ? 'light' : 'dark';
+  })();
+</script>
+<style>
+  :root {
+    color-scheme: normal;
+    --surface: rgba(20,28,25,0.92); --border: rgba(143,191,160,0.16); --text: #E8E4DA;
+    --text2: #8E9C91; --text3: #5F6F63; --silver: #8FBFA0; --silver-line: rgba(143,191,160,0.45);
+    --ring: rgba(60,140,50,0.75);
+  }
+  :root.light {
+    --surface: rgba(255,253,248,0.94); --border: rgba(40,64,50,0.16); --text: #1E2A23;
+    --text2: #56645B; --text3: #7D887F; --silver: #3F7357; --silver-line: rgba(63,115,87,0.45);
+    --ring: rgba(44,112,40,0.8);
+  }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+  #card {
+    all: unset; box-sizing: border-box; position: absolute; inset: 8px;
+    display: flex; align-items: center; padding: 6px 21px 6px 6px;
+    border-radius: 21px; border: 1px solid var(--border); background: var(--surface);
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  #card:focus-visible { outline: 2px solid var(--silver); outline-offset: 2px; }
+  #card:disabled { cursor: default; }
+  .ring { position: relative; flex: 0 0 64px; width: 64px; height: 64px; margin-right: 8px; }
+  .ring svg { position: absolute; left: -8px; top: -8px; }
+  .text { flex: 1; min-width: 0; line-height: 1.32; white-space: nowrap; overflow: hidden; text-align: left; }
+  .line { display: block; overflow: hidden; }
+  .line > span { display: inline-block; }
+  .l1 { font-size: 16px; color: var(--text); }
+  .l2 { font-size: 13px; color: var(--text2); margin-top: 1px; }
+  .l3 { font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--text3); margin-top: 3px; }
+  .by { text-transform: none; font-size: 11px; letter-spacing: 0.02em; }
+  .brand { font-weight: 500; color: var(--silver); text-decoration: underline; text-decoration-color: var(--silver-line); }
+  iframe {
+    position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
+    opacity: 0; transition: opacity .25s; color-scheme: normal; background: transparent;
+  }
+</style>
+</head>
+<body>
+<button id="card" type="button"
+  aria-label="JigRipper Mini: identify a tune. Loads a one-time download of about 130 MB.">
+  <span class="ring"><svg width="80" height="80" viewBox="0 0 80 80" aria-hidden="true"></svg></span>
+  <span class="text">
+    <span class="line l1"><span>Identify a tune</span></span>
+    <span class="line l2"><span>Tap the ring, then play a few bars</span></span>
+    <span class="line l3"><span><span class="by">Powered by <span class="brand">JigRipper</span></span>&ensp;·&ensp;One-time download, about 130 MB</span></span>
+  </span>
+</button>
+<script>
+(function () {
+  'use strict';
+  var q = new URLSearchParams(location.search);
+  var light = q.get('theme') === 'light', sameTab = q.get('links') === 'same';
+  var card = document.getElementById('card');
+
+  // The idle listen ring (the knot's maths at rest).
+  var svg = card.querySelector('svg'), color = getComputedStyle(card).getPropertyValue('--ring').trim();
+  var size = 36, c = 40, outer = size * 0.74, inner = size * 0.38 * 0.55;
+  var mid = (inner + outer) / 2, amp = ((outer - inner) / 2) * 0.12, paths = '';
+  for (var s = 0; s < 3; s++) {
+    var d = '';
+    for (var i = 0; i <= 160; i++) {
+      var th = (i / 160) * Math.PI * 2, r = mid + amp * Math.sin(4 * th + (s * 2 * Math.PI) / 3);
+      d += (i ? 'L' : 'M') + (c + r * Math.cos(th)).toFixed(1) + ',' + (c + r * Math.sin(th)).toFixed(1);
+    }
+    paths += '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.3" stroke-linecap="round"/>';
+  }
+  svg.innerHTML = paths;
+
+  // The widget's marquee for a line too wide for the card: pause, glide to the
+  // end at 36 px/s, pause, snap back — MarqueeText's timing.
+  function marquee() {
+    if (!card.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var lines = card.querySelectorAll('.line');
+    for (var i = 0; i < lines.length; i++) {
+      var inner = lines[i].firstChild, dist = inner.offsetWidth - lines[i].clientWidth;
+      inner.getAnimations().forEach(function (a) { a.cancel(); });
+      if (dist <= 1) continue;
+      var pause = 1800, scroll = Math.max(1200, dist / 36 * 1000), total = pause * 2 + scroll + 450;
+      inner.animate([
+        { transform: 'translateX(0)', offset: 0 },
+        { transform: 'translateX(0)', offset: pause / total, easing: 'ease-in-out' },
+        { transform: 'translateX(' + -dist + 'px)', offset: (pause + scroll) / total },
+        { transform: 'translateX(' + -dist + 'px)', offset: (pause * 2 + scroll) / total, easing: 'ease-in-out' },
+        { transform: 'translateX(0)', offset: 1 },
+      ], { duration: total, iterations: Infinity });
+    }
+  }
+  marquee();
+  var w = 0;
+  if (window.ResizeObserver) new ResizeObserver(function () {
+    if (card.disabled || Math.abs(card.clientWidth - w) < 1) return;
+    w = card.clientWidth; marquee();
+  }).observe(card);
+
+  // The tap: frame the real widget over the card and start its download.
+  var opened = false;
+  function open() {
+    if (opened) return;
+    opened = true;
+    var base = location.pathname.replace(/mini\/embed\/(index\.html)?$/, '');
+    var frame = document.createElement('iframe');
+    frame.src = base + '?mini=1&embed=1&autostart=1' + (light ? '&theme=light' : '') + (sameTab ? '&links=same' : '');
+    frame.title = 'JigRipper Mini';
+    frame.allow = 'microphone; autoplay';
+    frame.addEventListener('load', function () {
+      setTimeout(function () { frame.style.opacity = '1'; card.style.visibility = 'hidden'; }, 150);
+    });
+    card.disabled = true;
+    card.querySelectorAll('.line > span').forEach(function (s) { s.getAnimations().forEach(function (a) { a.cancel(); }); });
+    document.body.appendChild(frame);
+  }
+  card.addEventListener('click', open);
+  // JigRipperMini.open() on the host page (mini/embed.js) asks through here.
+  addEventListener('message', function (e) {
+    if (e.source === parent && e.data && e.data.jigripperMini === 'open') open();
+  });
+})();
+</script>
+</body>
+</html>
