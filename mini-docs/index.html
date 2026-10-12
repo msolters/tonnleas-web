@@ -6,6 +6,22 @@
 <title>JigRipper Mini</title>
 <meta name="description" content="Put JigRipper on your own site: a search-box-sized listen ring that names the Irish traditional tune being played. One element and one script tag.">
 <link rel="canonical" href="https://www.jigripper.com/mini-docs/">
+<meta name="theme-color" content="#0A0E0D">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="JigRipper">
+<meta property="og:locale" content="en_US">
+<meta property="og:url" content="https://www.jigripper.com/mini-docs/">
+<meta property="og:title" content="Add JigRipper Mini to your site">
+<meta property="og:description" content="Put JigRipper on your own site: a search-box-sized listen ring that names the Irish traditional tune being played. One element and one script tag.">
+<meta property="og:image" content="https://www.jigripper.com/og-mini.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="JigRipper Mini, naming a reel as it is played">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Add JigRipper Mini to your site">
+<meta name="twitter:description" content="Put JigRipper on your own site: a search-box-sized listen ring that names the Irish traditional tune being played. One element and one script tag.">
+<meta name="twitter:image" content="https://www.jigripper.com/og-mini.png">
+<meta name="twitter:image:alt" content="JigRipper Mini, naming a reel as it is played">
 <!--
   jigripper.com/mini-docs/ — the demo of, and instructions for, embedding
   JigRipper Mini on another site. (/mini/ opens the widget on its own.)
@@ -158,7 +174,7 @@
     <button class="copy" type="button" data-copy="iframe">Copy</button>
     <pre id="iframe">&lt;iframe src="https://www.jigripper.com/mini/embed/" allow="microphone; autoplay"
         title="JigRipper Mini" loading="lazy"
-        style="width:100%;max-width:536px;height:92px;border:0"&gt;&lt;/iframe&gt;</pre>
+        style="width:100%;max-width:536px;height:92px;border:0;color-scheme:light"&gt;&lt;/iframe&gt;</pre>
   </div>
   <p>The same options go on the end of the iframe's address: <code class="inline">?theme=light</code> for
     the light style, <code class="inline">?links=same</code> to open tune links in the same tab, or both:
@@ -168,8 +184,8 @@
   <ul>
     <li><strong>Almost nothing loads until they tap.</strong> Before that the widget is a small card from
       jigripper.com, a few kilobytes. JigRipper itself waits for the tap.</li>
-    <li><strong>A one-time download.</strong> The first tap downloads JigRipper's tune model, about
-      130&nbsp;MB, which the browser keeps. A second tap, inside the widget, starts listening.</li>
+    <li><strong>One tap.</strong> It downloads JigRipper's tune model once, about 130&nbsp;MB, which the
+      browser keeps, then starts listening. A few browsers ask for one more tap on the ring first.</li>
     <li><strong>Private.</strong> What they play is heard on their own device. It is never recorded and
       never sent anywhere, and the widget sets no cookies on your site.</li>
     <li><strong>The real thing.</strong> The same tune recognition as the JigRipper app, which knows

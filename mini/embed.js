@@ -34,8 +34,9 @@
  * ring that names the tune being played. This script only makes room for it and
  * frames jigripper.com/mini/embed/ there: a small placeholder card, a few KB,
  * that loads nothing else. Tapping the card swaps in the real widget (the
- * JigRipper app itself, in mini mode) and starts the one-time model download; a
- * second tap, inside the widget, starts listening. Everything you see, the
+ * JigRipper app itself, in mini mode), which downloads the tune model once and
+ * then starts listening: one tap does it all (a few browsers ask for a second
+ * tap on the ring before they allow audio). Everything you see, the
  * card included, comes from jigripper.com, so it is always the current version.
  *
  * Options, as attributes on the element:
@@ -50,9 +51,10 @@
  *   JigRipperMini.mount()          set up any new .jigripper-mini elements
  *   JigRipperMini.mount(element)   set up that element, or the ones inside it
  *   JigRipperMini.open(element)    open a widget as if its card were tapped
- *                                  (default: the first one on the page). The
- *                                  model starts downloading; listening still
- *                                  takes a tap inside the widget.
+ *                                  (default: the first one on the page). It
+ *                                  downloads, then listens, though a browser
+ *                                  may want a tap on the ring first when nobody
+ *                                  has tapped the page.
  * If you call these before the script has loaded, wait for its load event:
  *   <script src="…/mini/embed.js" async onload="JigRipperMini.mount()"></script>
  *
@@ -107,8 +109,13 @@
     frame.title = 'JigRipper Mini';
     frame.allow = 'microphone; autoplay';
     frame.setAttribute('data-jigripper-frame', '');
+    // color-scheme pinned to light on BOTH sides (here and the card's :root):
+    // when the frame and the page inside it disagree, Chrome paints an opaque
+    // backdrop behind it. "normal" here followed the host, so a page declaring
+    // "light dark", seen by someone who prefers dark, got a white box (found on
+    // thesession.org, 2026-10-11).
     frame.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;border:0;'
-      + 'color-scheme:normal;background:transparent';
+      + 'color-scheme:light;background:transparent';
     frame.addEventListener('load', function () { frame.setAttribute('data-loaded', ''); }, { once: true });
     box.appendChild(frame);
     el.textContent = '';
