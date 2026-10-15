@@ -98,6 +98,11 @@
   ul { color: var(--text-2); padding-left: 20px; margin: 0 0 13px; }
   li { margin-bottom: 6px; }
   strong { color: var(--text); font-weight: 500; }
+  main > h3 { font-size: 18px; font-weight: 400; letter-spacing: 0.01em; color: var(--text); margin: 34px 0 8px; }
+  .opts { margin: 0 0 21px; padding-left: 13px; border-left: 1px solid var(--rule); }
+  .opts dt { margin-top: 13px; color: var(--text); }
+  .opts dt:first-child { margin-top: 0; }
+  .opts dd { margin: 3px 0 0; color: var(--text-2); }
   footer { margin-top: 55px; font-size: 13px; color: var(--text-3); }
   footer a { color: var(--text-2); }
   @media (max-width: 480px) {
@@ -141,26 +146,31 @@
   </div>
 
   <h2>Add it to your site</h2>
-  <p>It's free, under our <a href="/terms/">terms of use</a>. Put this where you want the widget to appear:</p>
+  <p>It's free, under our <a href="/terms/">terms of use</a>. There are two ways to add it:</p>
+  <ul>
+    <li><strong>The script</strong>, recommended: an element and a script tag. It matches your page's
+      colours and text size by itself.</li>
+    <li><strong>An iframe</strong>: one tag and no script, for sites whose security settings block scripts
+      from other sites. You choose its colours yourself.</li>
+  </ul>
+
+  <h3>With the script</h3>
+  <p>Put this where you want the widget to appear:</p>
   <div class="code">
     <button class="copy" type="button" data-copy="snippet">Copy</button>
     <pre id="snippet">&lt;div class="jigripper-mini"&gt;&lt;/div&gt;
 &lt;script src="https://www.jigripper.com/mini/embed.js" async&gt;&lt;/script&gt;</pre>
   </div>
-  <ul>
-    <li>Use the <code class="inline">div</code> as many times as you like; one script tag serves them all.</li>
-    <li>It picks light or dark from your page. To choose, add <code class="inline">data-theme="light"</code>
-      or <code class="inline">data-theme="dark"</code> to the <code class="inline">div</code>.</li>
-    <li>"Open on The Session" opens the tune in a new tab, so your visitors keep your page. To open it in
-      the same tab instead, add <code class="inline">data-session-links="same-tab"</code> to the
-      <code class="inline">div</code> (<code class="inline">"new-tab"</code> is the default).</li>
-    <li>It is up to 536 pixels wide and 92 tall, and narrows to fit a phone. Where your text is set
-      larger than 16 pixels, it grows with it, up to half as large again.</li>
-    <li>Adding the element after the page has loaded, as single-page apps do? Call
-      <code class="inline">JigRipperMini.mount()</code> once it is in the page.
-      <code class="inline">JigRipperMini.open()</code> opens a widget as if it had been tapped.</li>
-  </ul>
+  <p>Use the <code class="inline">div</code> as many times as you like; one script tag serves them all.</p>
 
+  <p><strong>Options</strong> go on the <code class="inline">div</code>:</p>
+  <dl class="opts">
+    <dt><code class="inline">data-theme="light"</code> or <code class="inline">data-theme="dark"</code></dt>
+    <dd>Light or dark colours. Leave it out and the widget picks from your page's background.</dd>
+    <dt><code class="inline">data-session-links="same-tab"</code> or <code class="inline">data-session-links="new-tab"</code></dt>
+    <dd>Where "Open on The Session" opens the tune. The default is a new tab, so your visitors keep
+      your page.</dd>
+  </dl>
   <p>For example, a dark widget whose tune links open in the same tab:</p>
   <div class="code">
     <button class="copy" type="button" data-copy="options">Copy</button>
@@ -170,18 +180,64 @@
 &lt;script src="https://www.jigripper.com/mini/embed.js" async&gt;&lt;/script&gt;</pre>
   </div>
 
-  <p>If your site's security settings don't allow scripts from other sites, use this one tag instead:</p>
+  <p><strong>Size</strong> takes care of itself. The widget fills the width of the element it is in, up to
+    536 pixels, and narrows to fit a phone; it is 92 pixels tall. Where your text is set larger than
+    16 pixels, it grows with it, up to half as large again.</p>
+  <p><strong>Pages that add the element later</strong>, as single-page apps do, call
+    <code class="inline">JigRipperMini.mount()</code> once it is in the page, or
+    <code class="inline">JigRipperMini.mount(element)</code> for one element.
+    <code class="inline">JigRipperMini.open()</code> opens a widget as if it had been tapped.</p>
+
+  <h3>With an iframe</h3>
+  <p>Put this where you want the widget to appear:</p>
   <div class="code">
     <button class="copy" type="button" data-copy="iframe">Copy</button>
-    <pre id="iframe">&lt;iframe src="https://www.jigripper.com/mini/embed/" allow="microphone; autoplay"
-        title="JigRipper Mini" loading="lazy"
-        style="width:100%;max-width:clamp(536px,33.5rem,804px);height:clamp(92px,5.75rem,138px);border:0;color-scheme:light"&gt;&lt;/iframe&gt;</pre>
+    <pre id="iframe">&lt;iframe src="https://www.jigripper.com/mini/embed/?theme=light"
+        allow="microphone; autoplay" title="JigRipper Mini" loading="lazy"
+        style="width:100%; max-width:clamp(536px,33.5rem,804px);
+               height:clamp(92px,5.75rem,138px); border:0; color-scheme:light"&gt;&lt;/iframe&gt;</pre>
   </div>
-  <p>Sized in <code class="inline">rem</code> like this, the widget grows with your page's text where
-    that is set larger, and is 536 × 92 pixels at 16-pixel text.</p>
-  <p>The same options go on the end of the iframe's address: <code class="inline">?theme=light</code> for
-    the light style, <code class="inline">?links=same</code> to open tune links in the same tab, or both:
-    <code class="inline">?theme=light&amp;links=same</code>.</p>
+
+  <p><strong>Options</strong> go on the end of the address: <code class="inline">?</code> before the first,
+    <code class="inline">&amp;</code> between them.</p>
+  <dl class="opts">
+    <dt><code class="inline">theme=light</code> or <code class="inline">theme=dark</code></dt>
+    <dd>Light or dark colours. An iframe can't see the page around it, so set this to match yours.
+      Leave it out and the widget is dark.</dd>
+    <dt><code class="inline">links=same</code></dt>
+    <dd>"Open on The Session" opens the tune in the same tab. Leave it out for a new tab, so your
+      visitors keep your page.</dd>
+  </dl>
+  <p>For example, a dark widget whose tune links open in the same tab:</p>
+  <div class="code">
+    <button class="copy" type="button" data-copy="iframe-options">Copy</button>
+    <pre id="iframe-options">&lt;iframe src="https://www.jigripper.com/mini/embed/?theme=dark&amp;links=same"
+        allow="microphone; autoplay" title="JigRipper Mini" loading="lazy"
+        style="width:100%; max-width:clamp(536px,33.5rem,804px);
+               height:clamp(92px,5.75rem,138px); border:0; color-scheme:light"&gt;&lt;/iframe&gt;</pre>
+  </div>
+
+  <p><strong>The rest of the tag</strong>:</p>
+  <dl class="opts">
+    <dt><code class="inline">allow="microphone; autoplay"</code></dt>
+    <dd>Required. Without it the widget can't listen.</dd>
+    <dt><code class="inline">title</code></dt>
+    <dd>Names the widget for screen readers.</dd>
+    <dt><code class="inline">loading="lazy"</code></dt>
+    <dd>Optional. The card loads when it nears the screen.</dd>
+    <dt><code class="inline">width</code>, <code class="inline">max-width</code> and <code class="inline">height</code></dt>
+    <dd>The size, the same as the script's: 536 × 92 pixels at 16-pixel text. Set in
+      <code class="inline">rem</code>, it grows with your page's text where that is set larger, up to half
+      as large again.</dd>
+    <dt><code class="inline">border:0</code></dt>
+    <dd>No frame; the widget draws its own edge.</dd>
+    <dt><code class="inline">color-scheme:light</code></dt>
+    <dd>Keep it, whichever theme you choose. It doesn't set the widget's colours (that is
+      <code class="inline">theme</code>, in the address); it keeps the frame's background clear, where some
+      browsers would otherwise paint a solid box behind the widget.</dd>
+  </dl>
+  <p><code class="inline">JigRipperMini.mount()</code> and <code class="inline">open()</code> come with the
+    script, so they don't apply to an iframe.</p>
 
   <h2>What your visitors get</h2>
   <ul>
