@@ -64,7 +64,7 @@
  * own (it needs no script):
  *   <iframe src="https://www.jigripper.com/mini/embed/" allow="microphone; autoplay"
  *           title="JigRipper Mini"
- *           style="width:100%;max-width:max(536px,33.5rem);height:max(92px,5.75rem);border:0"></iframe>
+ *           style="width:100%;max-width:clamp(536px,33.5rem,804px);height:clamp(92px,5.75rem,138px);border:0"></iframe>
  * (Sized in rem, the widget grows with your page's text on a site whose text
  * grows on larger screens, and is 536 × 92 at 16 px text.)
  * (Options on the iframe's URL: ?theme=light, and links=same for same-tab Session links,
@@ -92,9 +92,9 @@
   } catch (e) { /* inline or unknown: keep jigripper.com */ }
   // The widget: a 520 px card + 8 px margin all round, at 16 px text. Sized in
   // the page's own text units (em) so it grows with text that is set larger,
-  // up to 1.5× (the widget scales itself to the frame), and never shrinks below
-  // its design size.
-  var WIDTH = 'max(536px,33.5em)', HEIGHT = 'max(92px,5.75em)';
+  // never below its design size and never past 1.5× (24 px text), where the
+  // widget stops growing (it scales itself to the frame).
+  var WIDTH = 'clamp(536px,33.5em,804px)', HEIGHT = 'clamp(92px,5.75em,138px)';
 
   /** Light unless the page behind the element is dark. */
   function pickTheme(el) {
