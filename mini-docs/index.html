@@ -154,7 +154,8 @@
     <li>"Open on The Session" opens the tune in a new tab, so your visitors keep your page. To open it in
       the same tab instead, add <code class="inline">data-session-links="same-tab"</code> to the
       <code class="inline">div</code> (<code class="inline">"new-tab"</code> is the default).</li>
-    <li>It is up to 536 pixels wide and 92 tall, and narrows to fit a phone.</li>
+    <li>It is up to 536 pixels wide and 92 tall, and narrows to fit a phone. Where your text is set
+      larger than 16 pixels, it grows with it, up to half as large again.</li>
     <li>Adding the element after the page has loaded, as single-page apps do? Call
       <code class="inline">JigRipperMini.mount()</code> once it is in the page.
       <code class="inline">JigRipperMini.open()</code> opens a widget as if it had been tapped.</li>
@@ -174,8 +175,10 @@
     <button class="copy" type="button" data-copy="iframe">Copy</button>
     <pre id="iframe">&lt;iframe src="https://www.jigripper.com/mini/embed/" allow="microphone; autoplay"
         title="JigRipper Mini" loading="lazy"
-        style="width:100%;max-width:536px;height:92px;border:0;color-scheme:light"&gt;&lt;/iframe&gt;</pre>
+        style="width:100%;max-width:max(536px,33.5rem);height:max(92px,5.75rem);border:0;color-scheme:light"&gt;&lt;/iframe&gt;</pre>
   </div>
+  <p>Sized in <code class="inline">rem</code> like this, the widget grows with your page's text where
+    that is set larger, and is 536 × 92 pixels at 16-pixel text.</p>
   <p>The same options go on the end of the iframe's address: <code class="inline">?theme=light</code> for
     the light style, <code class="inline">?links=same</code> to open tune links in the same tab, or both:
     <code class="inline">?theme=light&amp;links=same</code>.</p>
@@ -187,7 +190,9 @@
     <li><strong>One tap.</strong> It downloads JigRipper's tune model once, about 130&nbsp;MB, which the
       browser keeps, then starts listening. A few browsers ask for one more tap on the ring first.</li>
     <li><strong>Private.</strong> What they play is heard on their own device. It is never recorded and
-      never sent anywhere, and the widget sets no cookies on your site.</li>
+      never sent anywhere, and the widget sets no cookies on your site. Like every page on
+      jigripper.com, it counts visits anonymously with Cloudflare Web Analytics, which uses no
+      cookies (<a href="/privacy/">privacy policy</a>).</li>
     <li><strong>The real thing.</strong> The same tune recognition as the JigRipper app, which knows
       over 22,000 tunes.</li>
   </ul>

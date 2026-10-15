@@ -33,7 +33,8 @@
  * Each .jigripper-mini element becomes the widget: a search-box-sized listen
  * ring that names the tune being played. This script only makes room for it and
  * frames jigripper.com/mini/embed/ there: a small placeholder card, a few KB,
- * that loads nothing else. Tapping the card swaps in the real widget (the
+ * that loads nothing else but an anonymous visit counter (see the end of this
+ * note). Tapping the card swaps in the real widget (the
  * JigRipper app itself, in mini mode), which downloads the tune model once and
  * then starts listening: one tap does it all (a few browsers ask for a second
  * tap on the ring before they allow audio). Everything you see, the
@@ -62,12 +63,18 @@
  * this file themselves (the licence above allows it), or use the iframe on its
  * own (it needs no script):
  *   <iframe src="https://www.jigripper.com/mini/embed/" allow="microphone; autoplay"
- *           title="JigRipper Mini" style="width:100%;max-width:536px;height:92px;border:0"></iframe>
+ *           title="JigRipper Mini"
+ *           style="width:100%;max-width:max(536px,33.5rem);height:max(92px,5.75rem);border:0"></iframe>
+ * (Sized in rem, the widget grows with your page's text on a site whose text
+ * grows on larger screens, and is 536 × 92 at 16 px text.)
  * (Options on the iframe's URL: ?theme=light, and links=same for same-tab Session links,
  * e.g. /mini/embed/?theme=light&links=same.)
  *
  * Nothing you play leaves the device and nothing is recorded; the widget sets no
- * cookies on your site and sends nothing to it.
+ * cookies on your site and sends nothing to it. Like every page on jigripper.com,
+ * the card and the widget count visits anonymously with Cloudflare Web Analytics
+ * (its script, from static.cloudflareinsights.com, runs inside the frame; it uses
+ * no cookies). Details: https://www.jigripper.com/privacy/
  */
 (function () {
   'use strict';
@@ -83,7 +90,11 @@
     if (/^(www\.)?jigripper\.com$/.test(u.hostname) || /\.ts\.net$/.test(u.hostname)
         || (/^(localhost|127\.0\.0\.1)$/.test(u.hostname) && /^808[12]$/.test(u.port))) ORIGIN = u.origin;
   } catch (e) { /* inline or unknown: keep jigripper.com */ }
-  var WIDTH = 536, HEIGHT = 92;   // the widget: a 520 px card + 8 px margin all round
+  // The widget: a 520 px card + 8 px margin all round, at 16 px text. Sized in
+  // the page's own text units (em) so it grows with text that is set larger,
+  // up to 1.5× (the widget scales itself to the frame), and never shrinks below
+  // its design size.
+  var WIDTH = 'max(536px,33.5em)', HEIGHT = 'max(92px,5.75em)';
 
   /** Light unless the page behind the element is dark. */
   function pickTheme(el) {
@@ -102,7 +113,7 @@
     if (el.getAttribute('data-jigripper-mounted')) return;
     el.setAttribute('data-jigripper-mounted', '1');
     var box = document.createElement('div');
-    box.style.cssText = 'position:relative;width:100%;max-width:' + WIDTH + 'px;height:' + HEIGHT + 'px';
+    box.style.cssText = 'position:relative;width:100%;max-width:' + WIDTH + ';height:' + HEIGHT;
     var frame = document.createElement('iframe');
     frame.src = ORIGIN + '/mini/embed/?theme=' + pickTheme(el)
       + (el.getAttribute('data-session-links') === 'same-tab' ? '&links=same' : '');
