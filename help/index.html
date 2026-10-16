@@ -186,6 +186,7 @@ ul > li > figure.plate, ul > li > figure.sliver {
 }
 figure.gem      { max-width: 72px; }
 figure.wrist    { max-width: 240px; }
+figure.mini     { max-width: 536px; }  /* JigRipper Mini at its real size (a 2× capture) */
 figure.round img { border-radius: 50%; }   /* a round watch screen: the glow follows the circle */
 
 /* ── Figures whose photograph has not been taken yet ──────
@@ -341,7 +342,7 @@ nav.toc li li a { color: var(--muted); }
      would not fit beside the page). Where scroll-driven animations are
      unsupported the contents still float, with every sub-heading shown. */
   @supports (animation-timeline: view()) and (timeline-scope: none) {
-    body { timeline-scope: --toc-glance, --toc-start, --toc-start-buttons-above-river, --toc-start-what-status-line, --toc-river, --toc-river-scrolling-back-through, --toc-river-reading-bands, --toc-river-tapping-band, --toc-sheet, --toc-sheet-keys-settings, --toc-sheet-page, --toc-sheet-buttons, --toc-sheet-holding-tune-still, --toc-sheet-gestures-music-itself, --toc-search, --toc-search-computer, --toc-library, --toc-library-sessions, --toc-library-tunes-your-saved, --toc-library-sets, --toc-editing, --toc-current-session, --toc-fix-tune, --toc-regroup, --toc-keep-set, --toc-your-sets, --toc-inside-set, --toc-play-set, --toc-upload, --toc-watch, --toc-watch-what-you-see, --toc-watch-starting-stopping, --toc-watch-apple, --toc-watch-wear, --toc-watch-when-wrist-phone, --toc-settings, --toc-input, --toc-trouble, --toc-trouble-not-hearing-me, --toc-trouble-showing-wrong-tune, --toc-trouble-showing-wrong-key, --toc-trouble-music-screen-keeps; }
+    body { timeline-scope: --toc-glance, --toc-start, --toc-start-buttons-above-river, --toc-start-what-status-line, --toc-river, --toc-river-scrolling-back-through, --toc-river-reading-bands, --toc-river-tapping-band, --toc-sheet, --toc-sheet-keys-settings, --toc-sheet-page, --toc-sheet-buttons, --toc-sheet-holding-tune-still, --toc-sheet-gestures-music-itself, --toc-search, --toc-search-computer, --toc-library, --toc-library-sessions, --toc-library-tunes-your-saved, --toc-library-sets, --toc-editing, --toc-current-session, --toc-fix-tune, --toc-regroup, --toc-keep-set, --toc-your-sets, --toc-inside-set, --toc-play-set, --toc-upload, --toc-watch, --toc-watch-what-you-see, --toc-watch-starting-stopping, --toc-watch-apple, --toc-watch-wear, --toc-watch-when-wrist-phone, --toc-mini, --toc-mini-using, --toc-mini-keeps, --toc-mini-your-site, --toc-settings, --toc-input, --toc-trouble, --toc-trouble-not-hearing-me, --toc-trouble-showing-wrong-tune, --toc-trouble-showing-wrong-key, --toc-trouble-music-screen-keeps; }
     nav.toc ol ol { max-height: 0; overflow: hidden; }
     section.part:has(> h2#glance) { view-timeline: --toc-glance block; view-timeline-inset: 25% 74%; }
     nav.toc a[href="#glance"] { animation: toc-here linear none; animation-timeline: --toc-glance; }
@@ -420,6 +421,15 @@ nav.toc li li a { color: var(--muted); }
     nav.toc a[href="#watch-wear"] { animation: toc-here linear none; animation-timeline: --toc-watch-wear; }
     div.sub:has(> h3#watch-when-wrist-phone) { view-timeline: --toc-watch-when-wrist-phone block; view-timeline-inset: 25% 74%; }
     nav.toc a[href="#watch-when-wrist-phone"] { animation: toc-here linear none; animation-timeline: --toc-watch-when-wrist-phone; }
+    section.part:has(> h2#mini) { view-timeline: --toc-mini block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#mini"] { animation: toc-here linear none; animation-timeline: --toc-mini; }
+    nav.toc li:has(> a[href="#mini"]) > ol { animation: toc-open linear none; animation-timeline: --toc-mini; }
+    div.sub:has(> h3#mini-using) { view-timeline: --toc-mini-using block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#mini-using"] { animation: toc-here linear none; animation-timeline: --toc-mini-using; }
+    div.sub:has(> h3#mini-keeps) { view-timeline: --toc-mini-keeps block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#mini-keeps"] { animation: toc-here linear none; animation-timeline: --toc-mini-keeps; }
+    div.sub:has(> h3#mini-your-site) { view-timeline: --toc-mini-your-site block; view-timeline-inset: 25% 74%; }
+    nav.toc a[href="#mini-your-site"] { animation: toc-here linear none; animation-timeline: --toc-mini-your-site; }
     section.part:has(> h2#settings) { view-timeline: --toc-settings block; view-timeline-inset: 25% 74%; }
     nav.toc a[href="#settings"] { animation: toc-here linear none; animation-timeline: --toc-settings; }
     nav.toc li:has(> a[href="#settings"]) > ol { animation: toc-open linear none; animation-timeline: --toc-settings; }
@@ -527,6 +537,13 @@ nav.toc li li a { color: var(--muted); }
           <li><a href="#watch-apple">Apple Watch</a></li>
           <li><a href="#watch-wear">Wear OS</a></li>
           <li><a href="#watch-when-wrist-phone">When the wrist and the phone disagree</a></li>
+        </ol>
+      </li>
+      <li><a href="#mini">JigRipper Mini</a>
+        <ol>
+          <li><a href="#mini-using">Using it</a></li>
+          <li><a href="#mini-keeps">What it keeps</a></li>
+          <li><a href="#mini-your-site">On your own website</a></li>
         </ol>
       </li>
       <li><a href="#settings">Settings worth knowing</a>
@@ -687,16 +704,22 @@ nav.toc li li a { color: var(--muted); }
 <h2 id="start">Getting started</h2>
 
 <p>
-  Find the ring near the bottom of the screen, beside the word
-  <span class="ui-text">listen</span>. Tap it, and JigRipper starts listening through your
-  microphone.
+  Find the ring near the bottom of the screen, beside
+  <span class="ui-text">Identify a tune</span>. Tap it, and JigRipper starts listening through
+  your microphone.
 </p>
 
 <figure class="sliver">
-  <img loading="lazy" decoding="async" src="img/listen-ring.png?v=56c36cb0a9" width="1029" height="510"
-       alt="The word LISTEN in small capitals beside a circular ring drawn as a woven green knot.">
+  <img loading="lazy" decoding="async" src="img/listen-ring.png?v=1c8c70d0fd" width="720" height="300"
+       alt="A circular ring drawn as a woven green knot, with the words Identify a tune and, beneath them, Tap the ring to start.">
   <figcaption>Tap the ring to start. Tap it again to stop.</figcaption>
 </figure>
+
+<p>
+  While JigRipper opens, a gold arc fills around the ring as it loads the tune model, and the
+  lines beside the ring say how far along it is. In a browser the first visit downloads the
+  model, about 130&nbsp;MB. When it is ready, tap the ring to start.
+</p>
 
 <p>
   Play your tune. You do not have to start at the beginning, and you do not have
@@ -1668,11 +1691,11 @@ nav.toc li li a { color: var(--muted); }
 <h4>A buzz when it finds a tune</h4>
 
 <p>
-  Your wrist is tapped each time JigRipper locks onto a different tune, which is
-  what makes a session in your pocket worth wearing. To turn it off, go to
-  settings, <strong>Apple Watch</strong>, <span class="ui-text">Vibrate on a new tune</span>.
+  JigRipper can tap your wrist each time it locks onto a different tune, which
+  makes a session in your pocket worth wearing. It is off to begin with: turn it on
+  in settings, <strong>Apple Watch</strong>, <span class="ui-text">Vibrate on a new tune</span>.
   The watch and the lock-screen card carry on updating either way — only the buzz
-  stops.
+  changes.
 </p>
 
 <!-- ─────────────────────────  WEAR OS  ───────────────────────── -->
@@ -1690,17 +1713,28 @@ nav.toc li li a { color: var(--muted); }
 <h4>Setting it up</h4>
 
 <p>
-  Here the watch app is a genuinely separate download. Installing JigRipper on the
-  phone does not put it on the watch.
+  Here the watch app is a separate download. Wear OS never puts it on the watch when
+  you install JigRipper on the phone, so the phone offers to do it for you.
 </p>
 
 <ol>
   <li>Pair the watch with your phone in the usual way, if you have not already.</li>
-  <li>Install JigRipper on the phone.</li>
-  <li><strong>On the watch itself,</strong> open the Play Store, find JigRipper,
-      and install it there too.</li>
-  <li>Open it once on the watch and once on the phone.</li>
+  <li>Install JigRipper on the phone and open it.</li>
+  <li>The first time it sees a watch without JigRipper, the phone offers it there.
+      Tap <span class="ui-pill m sel">install on watch</span>. The Play Store opens
+      <strong>on the watch</strong>; tap <b>Install</b> there.</li>
+  <li>Open it once on the watch.</li>
 </ol>
+
+<p>
+  Said <span class="ui-pill m">not now</span>? The same
+  <span class="ui-pill m">install on watch</span> is in settings, under
+  <strong>Wear OS watch</strong>, beside each connected watch. Or, on the watch
+  itself, open the Play Store, find JigRipper and install it there. On a computer,
+  JigRipper's page on <b>play.google.com</b> works too: <b>Install</b> lists your
+  devices, and you can tick the watch. The phone's Play Store app doesn't always
+  offer the watch.
+</p>
 
 <h4 id="watch-tile">Adding the tile</h4>
 
@@ -1745,11 +1779,13 @@ nav.toc li li a { color: var(--muted); }
   that an Apple Watch cannot.
 </p>
 
-<h4>No buzz</h4>
+<h4>A buzz when it finds a tune</h4>
 
 <p>
-  A Wear OS watch never buzzes when a new tune is found, so there is nothing there
-  to turn off. Raise your wrist, or glance at the tile.
+  As on an Apple Watch, JigRipper can tap your wrist each time it locks onto a
+  different tune. It is off to begin with: turn it on in settings,
+  <strong>Wear OS watch</strong>, <span class="ui-text">Vibrate on a new tune</span>.
+  The watch and its tile keep updating either way.
 </p>
 
 <!-- ─────────────────────────  SHARED  ───────────────────────── -->
@@ -1762,6 +1798,10 @@ nav.toc li li a { color: var(--muted); }
   <li><strong>The watch is showing a tune you have finished with.</strong> Tap
       <span class="ui-btn outline">Stop</span> on the watch. That returns the wrist to the
       <span class="ui-btn fill">Listen</span> button whatever the phone believes.</li>
+  <li><strong>The phone app closed or crashed mid-session.</strong> The watch goes
+      back to <span class="ui-btn fill">Listen</span> on its own within about three
+      minutes, once the phone stops checking in. On Wear OS it goes back at once if
+      JigRipper is uninstalled from the phone or the phone goes out of range.</li>
   <li><strong>A Wear OS tile is a little behind.</strong> Expected — see
       <a href="#watch-tile">Adding the tile</a> above. Open the watch app for the live
       view.</li>
@@ -1769,6 +1809,75 @@ nav.toc li li a { color: var(--muted); }
       installed as a pair, and the watch has to be paired and in range. Open
       JigRipper on the phone, then on the watch, and try again.</li>
 </ul>
+</div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════════ -->
+<section class="part">
+<h2 id="mini">JigRipper Mini</h2>
+
+<p>
+  JigRipper Mini is a delightful bite-sized serving of JigRipper: the same listening and the
+  same tune recognition as the app, in a strip about the size of a search box. It runs in a
+  web browser, at <a href="https://www.jigripper.com/mini/">jigripper.com/mini</a>, and other
+  websites can put it on their own pages.
+</p>
+
+<figure class="mini">
+  <img loading="lazy" decoding="async" src="img/mini.png?v=98451cab35" width="1072" height="188"
+       alt="A dark rounded strip. On the left, the woven green listen ring. Beside it, the tune name MacLeod's Farewell; beneath it, Reel · D Ionian · still listening · fiddle · strings; and beneath that, Powered by JigRipper, with JigRipper an underlined link, and an underlined gold link reading Open on The Session.">
+  <figcaption>
+    Mini once it has named a tune: its type and key, then the instruments it hears.
+  </figcaption>
+</figure>
+
+<p>
+  Mini names the tune and links to it, and that is all it does. The river, the sheet music,
+  and your sessions and sets are in the full app, at
+  <a href="https://www.jigripper.com/">jigripper.com</a> or on your phone.
+</p>
+
+<div class="sub">
+<h3 id="mini-using">Using it</h3>
+
+<ol>
+  <li>Tap the ring. The first time, Mini downloads the tune model: a gold arc fills around
+      the ring, and the lines beside it count the download.</li>
+  <li>When it is ready, it starts listening, and your browser asks to use the microphone.
+      A few browsers want one more tap on the ring first.</li>
+  <li>Play. <span class="ui-text">Listening…</span> becomes the tune's name, marked
+      <span class="ui-text">Identifying…</span> until JigRipper is sure, then with its type
+      and key.</li>
+  <li><span class="ui-text">Open on The Session ↗</span> opens the tune on thesession.org.
+      Tap the ring again to stop. The last tune stays on show until you start again.</li>
+</ol>
+</div>
+
+<div class="sub">
+<h3 id="mini-keeps">What it keeps</h3>
+
+<p>
+  Mini listens on your device, as the app does. What you play is never recorded and never
+  sent anywhere: not to us, and not to the website Mini is on.
+</p>
+
+<p>
+  The tune model stays in your browser, so it is not downloaded again; the line under the ring
+  then reads <span class="ui-text">Ready · audio stays on this device</span>. Browsers keep each
+  website's storage apart, though, so Mini on another website downloads its own copy the first
+  time you use it there. To remove it, clear your browser's stored data for jigripper.com, or
+  for the website you used it on.
+</p>
+</div>
+
+<div class="sub">
+<h3 id="mini-your-site">On your own website</h3>
+
+<p>
+  If you run a website, for a session, a club or your teaching, you can add Mini to it free,
+  with two lines of code. Until a visitor taps it, it downloads nothing but its own small
+  script. <a href="https://www.jigripper.com/mini-docs/">How to add it to your site →</a>
+</p>
 </div>
 </section>
 
@@ -1810,8 +1919,8 @@ nav.toc li li a { color: var(--muted); }
   <dt><span class="ui-text">Instrument presence</span></dt>
   <dd>On by default. Shows which instruments it thinks it can hear while you play.</dd>
   <dt><span class="ui-text">Vibrate on a new tune</span></dt>
-  <dd>iPhone only, on by default. Taps your wrist each time it locks onto a
-      different tune. Under <strong>Apple Watch</strong>; see
+  <dd>Off by default. Taps your wrist each time it locks onto a different tune.
+      Under <strong>Apple Watch</strong> or <strong>Wear OS watch</strong>; see
       <a href="#watch">On your watch</a>.</dd>
 </dl>
 
@@ -1969,6 +2078,7 @@ nav.toc li li a { color: var(--muted); }
   </p>
   <p>
     <a href="../privacy.html">Privacy</a> ·
+    <a href="../terms/">Terms</a> ·
     <a href="../support.html">Support</a> ·
     <a href="https://seisionnach.com">Séisionnach LLC</a>
   </p>
