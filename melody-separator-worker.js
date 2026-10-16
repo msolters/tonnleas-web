@@ -21,6 +21,25 @@
  *     { type:'result',  id:number, cleaned:Float32Array (22050Hz mono) }
  */
 
+// ── Dev-only logging ──
+// A worker has no __DEV__ and is served as written, so it gates on the host
+// that served it: a dev machine logs, the public site prints nothing. Mirrors
+// WORKER_DEV in presence-worker.js and isDevHost() in src/utils/console-relay.ts.
+var WORKER_DEV = (function () {
+  try {
+    var h = ((self.location && self.location.hostname) || '').toLowerCase().replace(/^\[|\]$/g, '');
+    if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+    if (h.slice(-6) === '.local' || h.slice(-7) === '.ts.net') return true;
+    var m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+    if (!m) return false;
+    var a = +m[1], b = +m[2];
+    return a === 10 || a === 127 || (a === 192 && b === 168) ||
+           (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+  } catch (_) { return false; }
+})();
+function devLog() { if (WORKER_DEV) console.log.apply(console, arguments); }
+
+
 // ── STFT params (must match the model's training) ──
 var SEP_N_FFT = 1024;
 var SEP_HOP = 256;
@@ -221,7 +240,7 @@ self.onmessage = async function(e) {
           for (var k2 = 0; k2 < cleanedRoundTrip.length; k2++) rmsOut += cleanedRoundTrip[k2] * cleanedRoundTrip[k2];
           rmsIn = Math.sqrt(rmsIn / samples.length);
           rmsOut = Math.sqrt(rmsOut / cleanedRoundTrip.length);
-          console.log('[Sep][BYPASS] id=' + msg.id + ' frames=' + stft.nFrames
+          devLog('[Sep][BYPASS] id=' + msg.id + ' frames=' + stft.nFrames
             + ' rms_in=' + rmsIn.toFixed(4) + ' rms_out=' + rmsOut.toFixed(4)
             + ' ratio=' + (rmsIn > 0 ? (rmsOut / rmsIn).toFixed(4) : 'n/a'));
         }
@@ -243,7 +262,7 @@ self.onmessage = async function(e) {
             + 'first=' + (d ? Array.prototype.slice.call(d, 0, 3).map(function(x){return x.toFixed(3);}).join(',') : '?')
             + ' sum=' + (d ? Array.prototype.reduce.call(d, function(a, b){return a + b;}, 0).toFixed(2) : '?'));
         }
-        console.log('[Sep][outputs id=' + msg.id + '] ' + info.join(' || '));
+        devLog('[Sep][outputs id=' + msg.id + '] ' + info.join(' || '));
       }
       var cleanedMag = outMap.melody_magnitude
         ? outMap.melody_magnitude.data
@@ -372,22 +391,22 @@ self.onmessage = async function(e) {
           }
         }
         var totalCells = stft.nFrames * SEP_BINS;
-        console.log('[Sep] id=' + msg.id + ' samp_io=' + samples.length + '/' + cleaned.length
+        devLog('[Sep] id=' + msg.id + ' samp_io=' + samples.length + '/' + cleaned.length
           + ' frames=' + stft.nFrames + ' bins=' + SEP_BINS
           + ' flatness=' + flatness.toFixed(3) + ' blend=' + BLEND.toFixed(2)
           + ' (cleaned ' + (BLEND * 100).toFixed(0) + '% / raw ' + ((1 - BLEND) * 100).toFixed(0) + '%)'
           + ' rms_io=' + rmsIn.toFixed(4) + '/' + rmsOut.toFixed(4)
           + ' mag_io=' + (sumIn / totalCells).toFixed(4) + '/' + (sumOut / totalCells).toFixed(4));
-        console.log('  diff: n=' + nDiff + '/' + totalCells + ' (' + (100 * nDiff / totalCells).toFixed(1) + '%)'
+        devLog('  diff: n=' + nDiff + '/' + totalCells + ' (' + (100 * nDiff / totalCells).toFixed(1) + '%)'
           + ' avg=' + (totalAbsDiff / totalCells).toFixed(5)
           + ' max=' + maxDiff.toFixed(4)
           + ' nOverInput=' + nOverInput + ' (' + (100 * nOverInput / totalCells).toFixed(1) + '%)');
-        console.log('  per-band suppression%: low=' + (100 * lowBandDiff / Math.max(lowBandIn, 1e-9)).toFixed(1)
+        devLog('  per-band suppression%: low=' + (100 * lowBandDiff / Math.max(lowBandIn, 1e-9)).toFixed(1)
           + ' mid(whistle)=' + (100 * midBandDiff / Math.max(midBandIn, 1e-9)).toFixed(1)
           + ' high=' + (100 * highBandDiff / Math.max(highBandIn, 1e-9)).toFixed(1));
-        console.log('  worst: f=' + maxFrame + ' b=' + maxBin + ' (~' + Math.round(maxBin * 22050 / SEP_N_FFT) + 'Hz)'
+        devLog('  worst: f=' + maxFrame + ' b=' + maxBin + ' (~' + Math.round(maxBin * 22050 / SEP_N_FFT) + 'Hz)'
           + ' in=' + maxIn.toFixed(4) + ' out=' + maxOut.toFixed(4));
-        console.log('  top5 outliers: ' + topMeta.map(function(m){
+        devLog('  top5 outliers: ' + topMeta.map(function(m){
           return m ? ('f=' + m.f + ' b=' + m.b + ' (' + Math.round(m.b * 22050 / SEP_N_FFT) + 'Hz) ' + m.iv.toFixed(2) + '→' + m.ov.toFixed(2)) : '-';
         }).join(' | '));
       }

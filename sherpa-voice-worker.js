@@ -5,6 +5,25 @@
  * Uses the 20M zipformer transducer model via WASM.
  */
 
+// ── Dev-only logging ──
+// A worker has no __DEV__ and is served as written, so it gates on the host
+// that served it: a dev machine logs, the public site prints nothing. Mirrors
+// WORKER_DEV in presence-worker.js and isDevHost() in src/utils/console-relay.ts.
+var WORKER_DEV = (function () {
+  try {
+    var h = ((self.location && self.location.hostname) || '').toLowerCase().replace(/^\[|\]$/g, '');
+    if (h === 'localhost' || h === '127.0.0.1' || h === '::1') return true;
+    if (h.slice(-6) === '.local' || h.slice(-7) === '.ts.net') return true;
+    var m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(h);
+    if (!m) return false;
+    var a = +m[1], b = +m[2];
+    return a === 10 || a === 127 || (a === 192 && b === 168) ||
+           (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254);
+  } catch (_) { return false; }
+})();
+function devLog() { if (WORKER_DEV) console.log.apply(console, arguments); }
+
+
 var recognizer = null;
 var recognizerStream = null;
 var baseUrl = '';
@@ -18,6 +37,8 @@ var _wasmV = '';    // sherpa-onnx-wasm-main-asr.wasm
 var Module = {
   // Skip the .data file — we load model files manually
   noInitialRun: true,
+  // The runtime's own stdout (console.log by default) is dev-only too.
+  print: devLog,
 
   locateFile: function(path) {
     return baseUrl + '/' + path + (path.slice(-5) === '.wasm' ? _wasmV : '');
@@ -31,7 +52,7 @@ var Module = {
 
 
   onRuntimeInitialized: function() {
-    console.log('[SherpaWorker] WASM runtime initialized');
+    devLog('[SherpaWorker] WASM runtime initialized');
     // Now Module.FS is available — load model files
     loadModelsAndInit();
   }
@@ -62,7 +83,7 @@ async function loadModelsAndInit() {
       var data = new Uint8Array(buf);
       // FS_createDataFile(parent, name, data, canRead, canWrite)
       createFile('/', m.name, data, true, true);
-      console.log('[SherpaWorker] Loaded ' + m.name + ' (' + (data.length / 1024 / 1024).toFixed(1) + 'MB)');
+      devLog('[SherpaWorker] Loaded ' + m.name + ' (' + (data.length / 1024 / 1024).toFixed(1) + 'MB)');
     }
 
     self.postMessage({ type: 'loading', status: 'Creating recognizer...' });
@@ -94,7 +115,7 @@ async function loadModelsAndInit() {
     };
 
     recognizer = createOnlineRecognizer(Module, config);
-    console.log('[SherpaWorker] Recognizer created');
+    devLog('[SherpaWorker] Recognizer created');
     self.postMessage({ type: 'ready' });
 
   } catch (err) {
