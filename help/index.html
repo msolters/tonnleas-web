@@ -718,7 +718,12 @@ nav.toc li li a { color: var(--muted); }
 <p>
   While JigRipper opens, a gold arc fills around the ring as it loads the tune model, and the
   lines beside the ring say how far along it is. In a browser the first visit downloads the
-  model, about 130&nbsp;MB. When it is ready, tap the ring to start.
+  model, about 130&nbsp;MB; after that your browser keeps it, and the lines say
+  <span class="ui-text">From this device</span> while it loads. Your browser keeps the rest of
+  JigRipper too, so after that first visit it opens and listens with no internet connection.
+  When it is ready, tap the ring
+  to start. The lines say <span class="ui-text">Starting…</span> while the microphone opens,
+  then <span class="ui-text">Listening…</span>.
 </p>
 
 <p>
@@ -1844,7 +1849,9 @@ nav.toc li li a { color: var(--muted); }
   <li>Tap the ring. The first time, Mini downloads the tune model: a gold arc fills around
       the ring, and the lines beside it count the download.</li>
   <li>When it is ready, it starts listening, and your browser asks to use the microphone.
-      A few browsers want one more tap on the ring first.</li>
+      It says <span class="ui-text">Starting…</span> while the microphone opens. A few
+      browsers want one more tap on the ring first: then it says
+      <span class="ui-text">Ready</span>, and a tap on the ring starts it.</li>
   <li>Play. <span class="ui-text">Listening…</span> becomes the tune's name, marked
       <span class="ui-text">Identifying…</span> until JigRipper is sure, then with its type
       and key.</li>
@@ -1862,11 +1869,16 @@ nav.toc li li a { color: var(--muted); }
 </p>
 
 <p>
-  The tune model stays in your browser, so it is not downloaded again; the line under the ring
-  then reads <span class="ui-text">Ready · audio stays on this device</span>. Browsers keep each
-  website's storage apart, though, so Mini on another website downloads its own copy the first
-  time you use it there. To remove it, clear your browser's stored data for jigripper.com, or
-  for the website you used it on.
+  The tune model, and the smaller models that work beside it, stay in your browser, so they
+  are not downloaded again. So does Mini itself: once it has listened on a website, it opens and
+  listens there with no internet connection, on any page of that website your browser can open
+  offline. Before you tap, Mini then reads <span class="ui-text">Ready · audio stays on this device</span>
+  instead of the download size, and while it loads it says <span class="ui-text">From this device</span>.
+  Browsers keep each website's storage apart, though, so Mini on another website downloads its
+  own copy the first time you use it there. Firefox set to block “All cross-site cookies” keeps
+  nothing for Mini on another website: there it downloads the model each time, and needs the
+  internet. To remove it, clear your browser's stored data for jigripper.com, or for the website
+  you used it on.
 </p>
 </div>
 

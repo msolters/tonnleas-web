@@ -8,7 +8,7 @@
  *
  * Message contract is identical to the TF.js worker so the host (basic-pitch-session.web.ts) is
  * engine-agnostic:
- *   in  { type:'init', modelUrl, wasmPathPrefix, dev }   → { type:'ready' }
+ *   in  { type:'init', modelUrl, modelStore?, wasmPathPrefix, dev }   → { type:'ready' }
  *   in  { type:'transcribe', id, audio:ArrayBuffer }      → { type:'result', id, frames, onsets, contours }
  */
 /* eslint-disable */
@@ -81,6 +81,34 @@ async function transcribe(audio) {
   return { frames: framesOut, onsets: onsetsOut, contours: contoursOut };
 }
 
+/* Model storage: the Basic Pitch model is kept in the Cache API store the tune
+ * model lives in (dsp-worker.js, "Model storage"; the name comes in init as
+ * modelStore). A return visit reads it from this device instead of asking the
+ * network, so neither an evicted HTTP cache nor DevTools' "Disable cache"
+ * downloads it again. Anything that goes wrong falls back to a plain fetch.
+ * An older ?v= of the same file is deleted once the new one is stored. */
+async function storedFetch(url, storeName) {
+  var store = null;
+  try { if (self.caches && storeName) store = await self.caches.open(storeName); } catch (e) { store = null; }
+  if (store) {
+    try { var hit = await store.match(url); if (hit) return hit; } catch (e) { /* the network, then */ }
+  }
+  var r = await fetch(url);
+  if (!store || !r.ok || !r.body || typeof r.body.tee !== 'function') return r;
+  if (/text\/html|application\/json/.test(r.headers.get('content-type') || '')) return r;   // a page, not a model: never keep it
+  var pair = r.body.tee();
+  var headers = new Headers(r.headers);
+  headers.delete('content-encoding');   // the stored copy is decoded bytes
+  headers.delete('content-length');
+  var abs = new URL(url, self.location.href);
+  store.put(url, new Response(pair[1], { status: 200, headers: headers })).then(function () {
+    return store.keys().then(function (keys) {
+      keys.forEach(function (k) { var u = new URL(k.url); if (u.pathname === abs.pathname && u.href !== abs.href) store.delete(k); });
+    });
+  }).catch(function () {});
+  return new Response(pair[0], { status: r.status, statusText: r.statusText, headers: r.headers });
+}
+
 self.onmessage = async (e) => {
   const msg = e.data;
   try {
@@ -101,7 +129,9 @@ self.onmessage = async (e) => {
       self.ort.env.wasm.numThreads = 1;   // single-thread (no SharedArrayBuffer on iOS Safari)
       self.ort.env.wasm.simd = true;
       const t0 = Date.now();
-      _session = await self.ort.InferenceSession.create(msg.modelUrl, {
+      const mr = await storedFetch(msg.modelUrl, msg.modelStore);
+      if (!mr.ok) throw new Error('basic_pitch.onnx HTTP ' + mr.status);
+      _session = await self.ort.InferenceSession.create(new Uint8Array(await mr.arrayBuffer()), {
         executionProviders: ['wasm'],
         graphOptimizationLevel: 'all',
       });

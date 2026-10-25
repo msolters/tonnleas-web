@@ -20,7 +20,7 @@
  *
  * Protocol:
  *   Receives:
- *     { type:'init',    baseUrl, wasmVersion?, cnnModelUrl, cnnGate? }
+ *     { type:'init',    baseUrl, wasmVersion?, cnnModelUrl, cnnGate?, modelStore? }
  *     { type:'process', id:number, samples:Float32Array (22050Hz mono) }
  *   Sends:
  *     { type:'model-progress', loaded, total }
@@ -169,6 +169,34 @@ function stftMag(samples) {
 // ── ONNX runtime ──
 var ort = null;
 
+/* Model storage: the presence model is kept in the Cache API store the tune
+ * model lives in (dsp-worker.js, "Model storage"; the name comes in init as
+ * modelStore). A return visit reads it from this device instead of asking the
+ * network, so neither an evicted HTTP cache nor DevTools' "Disable cache"
+ * downloads it again. Anything that goes wrong falls back to a plain fetch.
+ * An older ?v= of the same file is deleted once the new one is stored. */
+async function storedFetch(url, storeName) {
+  var store = null;
+  try { if (self.caches && storeName) store = await self.caches.open(storeName); } catch (e) { store = null; }
+  if (store) {
+    try { var hit = await store.match(url); if (hit) return hit; } catch (e) { /* the network, then */ }
+  }
+  var r = await fetch(url);
+  if (!store || !r.ok || !r.body || typeof r.body.tee !== 'function') return r;
+  if (/text\/html|application\/json/.test(r.headers.get('content-type') || '')) return r;   // a page, not a model: never keep it
+  var pair = r.body.tee();
+  var headers = new Headers(r.headers);
+  headers.delete('content-encoding');   // the stored copy is decoded bytes
+  headers.delete('content-length');
+  var abs = new URL(url, self.location.href);
+  store.put(url, new Response(pair[1], { status: 200, headers: headers })).then(function () {
+    return store.keys().then(function (keys) {
+      keys.forEach(function (k) { var u = new URL(k.url); if (u.pathname === abs.pathname && u.href !== abs.href) store.delete(k); });
+    });
+  }).catch(function () {});
+  return new Response(pair[0], { status: r.status, statusText: r.statusText, headers: r.headers });
+}
+
 self.onmessage = async function(e) {
   var msg = e.data;
   if (msg.type === 'init') {
@@ -191,8 +219,8 @@ self.onmessage = async function(e) {
       if (!msg.cnnModelUrl) throw new Error('no cnnModelUrl in init');
       wlog('init: ort loaded — presence CNN (gate > ' + cnnGate + '), fetching ' + msg.cnnModelUrl);
       // Do NOT use cache:'no-store' — the versioned URL already guarantees a fresh
-      // fetch after a model swap, and normal caching gives an instant repeat-load.
-      var resp = await fetch(msg.cnnModelUrl);
+      // fetch after a model swap; the model store gives an instant repeat-load.
+      var resp = await storedFetch(msg.cnnModelUrl, msg.modelStore);
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       // Stream the body so the splash's progress bar sees the download advance.
       var buf;

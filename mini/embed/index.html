@@ -80,7 +80,7 @@
   <span class="text">
     <span class="line l1"><span>Identify a tune</span></span>
     <span class="line l2"><span>Tap the ring, then play a few bars</span></span>
-    <span class="line l3"><span><span class="by">Powered by <span class="brand">JigRipper</span></span>&ensp;·&ensp;One-time download, about 130 MB</span></span>
+    <span class="line l3"><span><span class="by">Powered by <span class="brand">JigRipper</span></span>&ensp;·&ensp;<span id="note">One-time download, about 130 MB</span></span></span>
   </span>
 </button>
 <script>
@@ -133,6 +133,30 @@
     if (card.disabled || Math.abs(card.clientWidth + card.clientHeight * 1000 - w) < 1) return;
     w = card.clientWidth + card.clientHeight * 1000; marquee();
   }).observe(card);
+
+  // Is the tune model already in this browser? The card shares the widget's
+  // storage (same site, framed by the same page), so it can look. If it is, the
+  // tap downloads nothing, and the card must not promise a download: it did on
+  // every visit (operator, 2026-10-23). STORE is the worker's model store,
+  // dsp-worker.js MODEL_STORE_PREFIX + ASSET_VERSIONS.modelDir; web-release.mjs
+  // fails a release where the two differ. A browser that refuses storage to a
+  // framed page just keeps the download line. The store also holds the smaller
+  // models, so look for the tune model's own file (FILE, as model-store.web.ts).
+  var STORE = 'jigripper-model-1006-r1';
+  var FILE = 'model_nokeycanon_tanh_fp16.onnx';
+  if (window.caches) caches.has(STORE).then(function (has) {
+    return has && caches.open(STORE).then(function (c) { return c.keys(); }).then(function (keys) {
+      var paths = keys.map(function (k) { return new URL(k.url).pathname; });
+      function holds(end) { return paths.some(function (p) { return p.slice(-end.length) === end; }); }
+      // Both shards (a half-finished download is still a download), or one file.
+      return (holds('/' + FILE + '.part0') && holds('/' + FILE + '.part1')) || holds('/' + FILE);
+    });
+  }).then(function (stored) {
+    if (!stored || card.disabled) return;
+    document.getElementById('note').textContent = 'Ready · audio stays on this device';
+    card.setAttribute('aria-label', 'JigRipper Mini: identify a tune. Ready: the tune model is already on this device.');
+    marquee();
+  }).catch(function () {});
 
   // The tap: frame the real widget over the card and start its download.
   var opened = false;

@@ -192,7 +192,15 @@ function subtractDroneFloor(tensors, nWindows) {
  * new model (an ASSET_VERSIONS.modelDir bump) is a new key and downloads fresh;
  * stores from older versions are deleted at init. Anything that goes wrong here
  * (no Cache API, quota, a third-party iframe with a small allowance) falls back
- * to a plain network fetch — storage must never be able to stop the model. */
+ * to a plain network fetch — storage must never be able to stop the model.
+ *
+ * The tonic sidecar goes through the same store, and presence-worker.js and
+ * basic-pitch-worker-onnx.js keep their models in it too (storedFetch, store
+ * name passed in their init): a refresh then asks the network for no model
+ * file at all. A tester on The Session saw presence_cnn.onnx and friends in
+ * the network tab on every refresh, and 32 MB come down with DevTools'
+ * "Disable cache" ticked, and read it as the model downloading again
+ * (operator, 2026-10-23). */
 const MODEL_STORE_PREFIX = 'jigripper-model-';
 let _modelStore = null;
 
@@ -220,6 +228,10 @@ async function modelFetch(url, opts) {
     }
     const r = await fetch(url, opts);
     if (!store || !r.ok || !r.body || typeof r.body.tee !== 'function') return r;
+    // A 200 that is a page, not a model (a dev server's fallback, a CDN error
+    // page) must never be kept: it would be served as the model until the next
+    // model version.
+    if (/text\/html|application\/json/.test(r.headers.get('content-type') || '')) return r;
     // One branch streams to the caller (download progress), the other into the
     // store. The stored copy is DECODED bytes, so the transfer headers that
     // describe the encoded stream (content-encoding/-length) are dropped.
@@ -468,7 +480,7 @@ async function init({ baseUrl, assetsBase, inputSr, modelFile, modelVersion, was
      * feature simply does not run. It must never be able to stop tune ID. */
     try {
         const tonicUrl = `${_baseUrl}/tonic/tonic_sidecar_fp16.onnx${modelVersion ? `?v=${modelVersion}` : ''}`;
-        const tr = await fetch(tonicUrl);
+        const tr = await modelFetch(tonicUrl, { credentials: 'same-origin' });
         if (tr.ok) {
             _tonicSession = await self.ort.InferenceSession.create(
                 await tr.arrayBuffer(),
