@@ -21,7 +21,7 @@
  * To switch it off, release with `web-release.mjs --sw-off`
  * (scripts/offline/sw-off.js).
  */
-const BUILD = '99fde40027724572';
+const BUILD = '4c1476859eceb009';
 const SHELL_PREFIX = 'jigripper-shell-';
 const SHELL = SHELL_PREFIX + BUILD;
 const PRECACHE = [
@@ -101,7 +101,9 @@ const HASHED = /^\/(_expo\/static|assets)\//;
 // No answer, or the server failing: use the kept copy. Firefox's navigation
 // preload does not reject when the connection is refused, it RESOLVES with a
 // network-error response (status 0), so a rejection alone is not enough.
-const failed = (res) => !res || res.type === 'error' || res.status === 0 || res.status >= 500;
+// A redirect is an answer: a page's arrives as an opaque redirect, status 0
+// too (/mini-docs → /mini-docs/), and goes to the browser to follow.
+const failed = (res) => !res || res.type === 'error' || (res.status === 0 && res.type !== 'opaqueredirect') || res.status >= 500;
 
 // A page is kept by its path: /?mini=1&embed=1… and / are the same index.html.
 const keyOf = (url, isPage) => {
