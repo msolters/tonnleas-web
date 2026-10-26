@@ -21,7 +21,7 @@
  * To switch it off, release with `web-release.mjs --sw-off`
  * (scripts/offline/sw-off.js).
  */
-const BUILD = '4c1476859eceb009';
+const BUILD = '6ec1b6e657f47e1d';
 const SHELL_PREFIX = 'jigripper-shell-';
 const SHELL = SHELL_PREFIX + BUILD;
 const PRECACHE = [
@@ -148,8 +148,22 @@ self.addEventListener('install', (event) => {
       if (!res.ok) throw new Error(`precache ${u}: HTTP ${res.status}`);
       await cache.put(keyOf(u), res);
     }));
+    await Promise.race([followTyped(), new Promise((r) => setTimeout(r, 5000))]);
   })());
 });
+
+// The site is www.jigripper.com; jigripper.com redirects there. With no network
+// the browser can follow only a redirect it has seen, so a typed jigripper.com/mini
+// that it had never seen showed the dinosaur (2026-10-25). Following the typed
+// addresses here once is enough for Chrome; Firefox does not follow a kept
+// redirect offline. Best effort: failures are ignored, and the install waits 5 s at most.
+const TYPED = ['/', '/mini', '/mini/', '/help', '/help/', '/mini-docs', '/mini-docs/'];
+async function followTyped() {
+  const { protocol, hostname } = self.location;
+  if (!hostname.startsWith('www.')) return;
+  const bare = `${protocol}//${hostname.slice(4)}`;
+  await Promise.all(TYPED.map((p) => fetch(bare + p, { mode: 'no-cors', credentials: 'include' }).catch(() => {})));
+}
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
