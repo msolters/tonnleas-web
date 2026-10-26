@@ -21,13 +21,13 @@
  * To switch it off, release with `web-release.mjs --sw-off`
  * (scripts/offline/sw-off.js).
  */
-const BUILD = '6ec1b6e657f47e1d';
+const BUILD = '4ba75a9293b5ec69';
 const SHELL_PREFIX = 'jigripper-shell-';
 const SHELL = SHELL_PREFIX + BUILD;
 const PRECACHE = [
   "/",
   "/mini/embed/",
-  "/_expo/static/js/web/index-beb5c1372b2bc62edab37446a6dfdbae.js",
+  "/_expo/static/js/web/index-17cf23ff186342682b8c5df6d181b619.js",
   "/favicon.ico",
   "/1006/canonical_redirects.json",
   "/1006/label_map.json",

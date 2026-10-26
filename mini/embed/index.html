@@ -13,7 +13,9 @@
   itself, the app in mini mode (/?mini=1&embed=1&autostart=1), over this card,
   which stays until the widget has drawn so there is no blank flash.
 
-  Options: ?theme=light, &links=same. JigRipperMini.open() on the parent page
+  Options: ?theme=light, &links=same, &guesses=1 (the top 10 guesses under the
+  card, in a 333-tall frame: the card draws their empty list too, so the swap
+  does not move a pixel). JigRipperMini.open() on the parent page
   sends {jigripperMini: 'open'}. Pages that point here never update, so these
   must keep working.
 
@@ -23,7 +25,8 @@
   // Before first paint, so the card never flashes the wrong theme.
   (function () {
     var q = new URLSearchParams(location.search);
-    document.documentElement.className = q.get('theme') === 'light' ? 'light' : 'dark';
+    document.documentElement.className = (q.get('theme') === 'light' ? 'light' : 'dark')
+      + (q.get('guesses') === '1' ? ' guesses' : '');
   })();
 </script>
 <style>
@@ -44,6 +47,8 @@
     --text2: #56645B; --text3: #7D887F; --silver: #3F7357; --silver-line: rgba(63,115,87,0.45);
     --ring: rgba(44,112,40,0.8);
   }
+  /* With the guesses: designed for a 333 px frame (8 + 76 + 8 + 233 + 8). */
+  :root.guesses { --u: clamp(1px, calc(100vh / 333), 1.5px); }
   html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
   #card {
     all: unset; box-sizing: border-box; position: absolute;
@@ -67,6 +72,24 @@
   .l3 { font-size: calc(10.5 * var(--u)); letter-spacing: 0.07em; text-transform: uppercase; color: var(--text3); margin-top: calc(3 * var(--u)); }
   .by { text-transform: none; font-size: calc(11 * var(--u)); letter-spacing: 0.02em; }
   .brand { font-weight: 500; color: var(--silver); text-decoration: underline; text-decoration-color: var(--silver-line); }
+  /* The guesses' empty list, as the widget draws it (MiniGuesses, styles.g*). */
+  #guesses { display: none; }
+  :root.guesses #guesses {
+    display: block; box-sizing: border-box; position: absolute;
+    top: calc(92 * var(--u)); left: calc(8 * var(--u)); right: calc(8 * var(--u));
+    height: calc(233 * var(--u)); max-width: calc(520 * var(--u));
+    padding: calc(8 * var(--u)) calc(21 * var(--u)) calc(8 * var(--u)) calc(6 * var(--u));
+    border-radius: calc(21 * var(--u)); border: 1px solid var(--border); background: var(--surface);
+    cursor: pointer; color: var(--text3); white-space: nowrap; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  #guesses .head { display: flex; height: calc(14 * var(--u)); line-height: calc(14 * var(--u));
+    font-size: calc(10.5 * var(--u)); letter-spacing: calc(0.7 * var(--u)); text-transform: uppercase; }
+  #guesses .head > :first-child { flex: 1; padding-left: calc(72 * var(--u)); }
+  #guesses .body { display: flex; margin-top: calc(1 * var(--u)); }
+  #guesses .nums { width: calc(64 * var(--u)); opacity: 0.5; }
+  #guesses .nums span { display: block; height: calc(20 * var(--u)); line-height: calc(20 * var(--u));
+    font-size: calc(10.5 * var(--u)); text-align: right; padding-right: calc(8 * var(--u)); font-variant-numeric: tabular-nums; }
   iframe {
     position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
     opacity: 0; transition: opacity .25s; color-scheme: normal; background: transparent;
@@ -83,11 +106,15 @@
     <span class="line l3"><span><span class="by">Powered by <span class="brand">JigRipper</span></span>&ensp;·&ensp;<span id="note">One-time download, about 130 MB</span></span></span>
   </span>
 </button>
+<div id="guesses" aria-hidden="true">
+  <div class="head"><span>Top guesses</span><span>Confidence</span></div>
+  <div class="body"><div class="nums"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span></div></div>
+</div>
 <script>
 (function () {
   'use strict';
   var q = new URLSearchParams(location.search);
-  var light = q.get('theme') === 'light', sameTab = q.get('links') === 'same';
+  var light = q.get('theme') === 'light', sameTab = q.get('links') === 'same', guesses = q.get('guesses') === '1';
   var card = document.getElementById('card');
 
   // The idle listen ring (the knot's maths at rest).
@@ -165,17 +192,22 @@
     opened = true;
     var base = location.pathname.replace(/mini\/embed\/(index\.html)?$/, '');
     var frame = document.createElement('iframe');
-    frame.src = base + '?mini=1&embed=1&autostart=1' + (light ? '&theme=light' : '') + (sameTab ? '&links=same' : '');
+    frame.src = base + '?mini=1&embed=1&autostart=1' + (light ? '&theme=light' : '') + (sameTab ? '&links=same' : '')
+      + (guesses ? '&guesses=1' : '');
     frame.title = 'JigRipper Mini';
     frame.allow = 'microphone; autoplay';
     frame.addEventListener('load', function () {
-      setTimeout(function () { frame.style.opacity = '1'; card.style.visibility = 'hidden'; }, 150);
+      setTimeout(function () {
+        frame.style.opacity = '1'; card.style.visibility = 'hidden';
+        document.getElementById('guesses').style.visibility = 'hidden';
+      }, 150);
     });
     card.disabled = true;
     card.querySelectorAll('.line > span').forEach(function (s) { s.getAnimations().forEach(function (a) { a.cancel(); }); });
     document.body.appendChild(frame);
   }
   card.addEventListener('click', open);
+  document.getElementById('guesses').addEventListener('click', open);
   // JigRipperMini.open() on the host page (mini/embed.js) asks through here.
   addEventListener('message', function (e) {
     if (e.source === parent && e.data && e.data.jigripperMini === 'open') open();

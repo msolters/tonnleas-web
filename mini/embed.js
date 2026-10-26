@@ -46,6 +46,10 @@
  *                                 where "Open on The Session ↗" opens. Default
  *                                 new-tab, so visitors keep your page; same-tab
  *                                 takes your page itself to the tune.
+ *   data-guesses="on"             under the widget, the top 10 guesses, each
+ *                                 with how sure it is, most sure at the top; each
+ *                                 opens on The Session. The widget is then 333 px
+ *                                 tall instead of 92. Default off.
  *
  * The script sets up every element that is on the page when it loads. Pages that
  * add one later (single-page apps, content loaded on demand) call:
@@ -67,8 +71,9 @@
  *           style="width:100%;max-width:clamp(536px,33.5rem,804px);height:clamp(92px,5.75rem,138px);border:0"></iframe>
  * (Sized in rem, the widget grows with your page's text on a site whose text
  * grows on larger screens, and is 536 × 92 at 16 px text.)
- * (Options on the iframe's URL: ?theme=light, and links=same for same-tab Session links,
- * e.g. /mini/embed/?theme=light&links=same.)
+ * (Options on the iframe's URL: ?theme=light, links=same for same-tab Session links,
+ * and guesses=1 for the top 10 guesses, e.g. /mini/embed/?theme=light&links=same.
+ * With guesses=1 the frame is 333 tall: height:clamp(333px,20.8125rem,499.5px).)
  *
  * Nothing you play leaves the device and nothing is recorded; the widget sets no
  * cookies on your site and sends nothing to it. Like every page on jigripper.com,
@@ -95,6 +100,9 @@
   // never below its design size and never past 1.5× (24 px text), where the
   // widget stops growing (it scales itself to the frame).
   var WIDTH = 'clamp(536px,33.5em,804px)', HEIGHT = 'clamp(92px,5.75em,138px)';
+  // With the top 10 guesses under the card: 8 + 76 + 8 + 233 + 8 (MiniPlayer.tsx,
+  // MINI_FRAME_H_GUESSES), growing by the same rule.
+  var HEIGHT_GUESSES = 'clamp(333px,20.8125em,499.5px)';
 
   /** Light unless the page behind the element is dark. */
   function pickTheme(el) {
@@ -112,11 +120,13 @@
   function mount(el) {
     if (el.getAttribute('data-jigripper-mounted')) return;
     el.setAttribute('data-jigripper-mounted', '1');
+    var guesses = el.getAttribute('data-guesses') === 'on';
     var box = document.createElement('div');
-    box.style.cssText = 'position:relative;width:100%;max-width:' + WIDTH + ';height:' + HEIGHT;
+    box.style.cssText = 'position:relative;width:100%;max-width:' + WIDTH + ';height:' + (guesses ? HEIGHT_GUESSES : HEIGHT);
     var frame = document.createElement('iframe');
     frame.src = ORIGIN + '/mini/embed/?theme=' + pickTheme(el)
-      + (el.getAttribute('data-session-links') === 'same-tab' ? '&links=same' : '');
+      + (el.getAttribute('data-session-links') === 'same-tab' ? '&links=same' : '')
+      + (guesses ? '&guesses=1' : '');
     frame.title = 'JigRipper Mini';
     frame.allow = 'microphone; autoplay';
     frame.setAttribute('data-jigripper-frame', '');

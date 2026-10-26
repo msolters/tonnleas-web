@@ -140,8 +140,8 @@
     <div class="site-bar"><i></i><i></i><i></i><span>a-darker-site.example</span></div>
     <div class="site-body">
       <h3>Learn a tune a week</h3>
-      <p class="meta">The widget takes its colours from the page it sits on.</p>
-      <div class="jigripper-mini"></div>
+      <p class="meta">The widget takes its colours from the page it sits on. This one also shows its top 10 guesses.</p>
+      <div class="jigripper-mini" data-guesses="on"></div>
     </div>
   </div>
 
@@ -170,6 +170,11 @@
     <dt><code class="inline">data-session-links="same-tab"</code> or <code class="inline">data-session-links="new-tab"</code></dt>
     <dd>Where "Open on The Session" opens the tune. The default is a new tab, so your visitors keep
       your page.</dd>
+    <dt><code class="inline">data-guesses="on"</code></dt>
+    <dd>Under the widget, the top 10 guesses, each with how sure it is, the surest at the
+      top. Each opens on The Session, so your visitors can check every tune it considered. The list
+      holds still when the playing stops. The widget is then 333 pixels tall instead of 92. Off by
+      default.</dd>
   </dl>
   <p>For example, a dark widget whose tune links open in the same tab:</p>
   <div class="code">
@@ -181,8 +186,8 @@
   </div>
 
   <p><strong>Size</strong> takes care of itself. The widget fills the width of the element it is in, up to
-    536 pixels, and narrows to fit a phone; it is 92 pixels tall. Where your text is set larger than
-    16 pixels, it grows with it, up to half as large again.</p>
+    536 pixels, and narrows to fit a phone; it is 92 pixels tall, or 333 with the guesses. Where your
+    text is set larger than 16 pixels, it grows with it, up to half as large again.</p>
   <p><strong>Pages that add the element later</strong>, as single-page apps do, call
     <code class="inline">JigRipperMini.mount()</code> once it is in the page, or
     <code class="inline">JigRipperMini.mount(element)</code> for one element.
@@ -207,6 +212,9 @@
     <dt><code class="inline">links=same</code></dt>
     <dd>"Open on The Session" opens the tune in the same tab. Leave it out for a new tab, so your
       visitors keep your page.</dd>
+    <dt><code class="inline">guesses=1</code></dt>
+    <dd>The top 10 guesses under the widget, as with the script. Make the iframe taller to
+      fit: <code class="inline">height:clamp(333px,20.8125rem,499.5px)</code>.</dd>
   </dl>
   <p>For example, a dark widget whose tune links open in the same tab:</p>
   <div class="code">
@@ -226,7 +234,8 @@
     <dt><code class="inline">loading="lazy"</code></dt>
     <dd>Optional. The card loads when it nears the screen.</dd>
     <dt><code class="inline">width</code>, <code class="inline">max-width</code> and <code class="inline">height</code></dt>
-    <dd>The size, the same as the script's: 536 × 92 pixels at 16-pixel text. Set in
+    <dd>The size, the same as the script's: 536 × 92 pixels at 16-pixel text (536 × 333 with
+      <code class="inline">guesses=1</code>). Set in
       <code class="inline">rem</code>, it grows with your page's text where that is set larger, up to half
       as large again.</dd>
     <dt><code class="inline">border:0</code></dt>
